@@ -794,14 +794,14 @@
         let bestCandidate = null;
         let bestDiff = Infinity;
         const maxSearch = repeatS + jitterS * 2;
-        const pairTotalDuration = totalDropDuration + pairSpacingS + totalDropDuration + 0.1; // Total time needed for both drops + gap
+        const pairTotalDuration = pairSpacingS + totalDropDuration; // Time from drop 1 start to drop 2 end
         
         for (const frame of candidateFrames) {
           const diff = Math.abs(frame.time - relativeTarget);
           if (diff < bestDiff && frame.time >= relativeTarget && diff < maxSearch) {
             // Check if there's enough masking coverage for both drops
             const firstDropTime = frame.time;
-            const secondDropTime = firstDropTime + pairSpacingS + totalDropDuration + 0.05;
+            const secondDropTime = firstDropTime + pairSpacingS;
             
             // Verify second drop also has masking
             let secondHasMasking = false;
@@ -840,8 +840,8 @@
       gain.setValueAtTime(dropDepth, actualTime + fadeInS + holdTime);
       gain.linearRampToValueAtTime(0, actualTime + fadeInS + holdTime + fadeOutS);
       
-      // Schedule SECOND drop (offset by pair spacing + small gap)
-      const secondDropTime = actualTime + pairSpacingS + totalDropDuration + 0.05; // 50ms gap
+      // Schedule SECOND drop (offset by pair spacing)
+      const secondDropTime = actualTime + pairSpacingS;
       gain.setValueAtTime(0, secondDropTime);
       gain.linearRampToValueAtTime(dropDepth, secondDropTime + fadeInS);
       gain.setValueAtTime(dropDepth, secondDropTime + fadeInS + holdTime);
