@@ -1089,6 +1089,15 @@
         totalIndividualDrops++;
         dropFrameCount = 0;  // Reset after registering drop
         
+        // Log spacing from previous drop for debugging
+        if (dropDetectionTimestamps.length >= 2) {
+          const prevDrop = dropDetectionTimestamps[dropDetectionTimestamps.length - 2];
+          const actualSpacing = (now - prevDrop) * 1000;
+          console.log(`Drop #${totalIndividualDrops} detected. Spacing from prev: ${actualSpacing.toFixed(1)}ms`);
+        } else {
+          console.log(`Drop #${totalIndividualDrops} detected (first drop)`);
+        }
+        
         document.getElementById('individualDrops').textContent = totalIndividualDrops;
         
         // Check if this drop completes a valid pair
@@ -1159,23 +1168,31 @@
       const expectedSpacingS = expectedSpacingMs / 1000;
       const toleranceS = toleranceMs / 1000;
       
+      console.log(`Checking for pair. Expected: ${expectedSpacingMs}ms ±${toleranceMs}ms. Have ${dropDetectionTimestamps.length} drops in history.`);
+      
       // Look backwards through recent detections for a matching first drop
       for (let i = dropDetectionTimestamps.length - 2; i >= 0; i--) {
         const firstDropTime = dropDetectionTimestamps[i];
         const spacing = newDropTime - firstDropTime;
+        const spacingMs = spacing * 1000;
+        const delta = Math.abs(spacing - expectedSpacingS) * 1000;
+        
+        console.log(`  Checking drop at index ${i}: spacing=${spacingMs.toFixed(1)}ms, delta=${delta.toFixed(1)}ms`);
         
         // Check if spacing matches expected pair spacing within tolerance
         if (Math.abs(spacing - expectedSpacingS) <= toleranceS) {
-          console.log(`Pair match! Spacing: ${(spacing * 1000).toFixed(1)}ms (expected: ${expectedSpacingMs}ms ±${toleranceMs}ms)`);
+          console.log(`✓ PAIR MATCH! Spacing: ${spacingMs.toFixed(1)}ms is within ${expectedSpacingMs}ms ±${toleranceMs}ms`);
           return true;
         }
         
         // Stop looking if we're beyond possible match range
         if (newDropTime - firstDropTime > expectedSpacingS + 1.0) {
+          console.log(`  Stopping search (too far back)`);
           break;
         }
       }
       
+      console.log(`✗ No pair match found`);
       return false;
     }
 
