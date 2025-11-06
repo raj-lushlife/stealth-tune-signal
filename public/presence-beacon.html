@@ -528,6 +528,13 @@
     let totalHitsDetected = 0;
     let presenceVerified = false;
     let bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+    
+    // Enhanced RX State for false-positive rejection
+    let prevFrameRms = -120;
+    let spectralFluxHistory = [];
+    let notchHistory = [];
+    let persistenceFrames = []; // Track contiguous frame states
+    let pilotTimestamps = []; // For pilot detection
 
     // ==================== UTILITY FUNCTIONS ====================
     
@@ -935,6 +942,11 @@
       lastHitTime = 0;
       totalHitsDetected = 0;
       bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+      prevFrameRms = -120;
+      spectralFluxHistory = [];
+      notchHistory = [];
+      persistenceFrames = [];
+      pilotTimestamps = [];
       
       // Start detection loop
       rxInterval = setInterval(detectDrop, 120);
@@ -949,6 +961,7 @@
       
       const sampleRate = audioContext.sampleRate;
       const binHz = (sampleRate / 2) / (bufferLength - 1);
+      const now = audioContext.currentTime;
       
       // Get band ranges
       const notchLow = parseFloat(document.getElementById('notchLow').value);
@@ -963,6 +976,81 @@
       const guardLoPower = computeBandPower(dataArray, binHz, guardLoLow, guardLoHigh);
       const guardHiPower = computeBandPower(dataArray, binHz, guardHiLow, guardHiHigh);
       const guardAvg = (guardLoPower + guardHiPower) / 2;
+      
+      // === FALSE POSITIVE REJECTION SUITE ===
+      
+      // 1. IMPULSE VETO (time-domain)
+      // Compute current frame RMS from frequency data (approximate)
+      const currentRms = computeRmsFromFreqData(dataArray);
+      const deltaRms = currentRms - prevFrameRms;
+      
+      // Veto if huge energy jump
+      if (deltaRms > 10) {
+        prevFrameRms = currentRms;
+        return; // Veto: impulse spike
+      }
+      prevFrameRms = currentRms;
+      
+      // 2. ONSET/FLUX VETO (freq-domain)
+      const spectralFlux = computeSpectralFlux(dataArray);
+      spectralFluxHistory.push({ time: now, flux: spectralFlux });
+      
+      // Keep 5 seconds of history
+      spectralFluxHistory = spectralFluxHistory.filter(f => (now - f.time) <= 5);
+      
+      // Compute median and IQR
+      if (spectralFluxHistory.length >= 10) {
+        const fluxValues = spectralFluxHistory.map(f => f.flux).sort((a, b) => a - b);
+        const median = fluxValues[Math.floor(fluxValues.length / 2)];
+        const q1 = fluxValues[Math.floor(fluxValues.length / 4)];
+        const q3 = fluxValues[Math.floor(fluxValues.length * 3 / 4)];
+        const iqr = q3 - q1;
+        
+        if (spectralFlux > median + 2.5 * iqr) {
+          return; // Veto: spectral flux spike (click/snap)
+        }
+      }
+      
+      // 3. GUARD SYMMETRY
+      const guardAsymmetry = Math.abs(guardLoPower - guardHiPower);
+      if (guardAsymmetry > 1.5) {
+        return; // Veto: guards unbalanced (lopsided snap)
+      }
+      
+      // 4. STRONGER SNR + REAL-DIP
+      // Check both guards have strong SNR
+      const snrLo = guardLoPower - notchPower;
+      const snrHi = guardHiPower - notchPower;
+      const minSnr = Math.min(snrLo, snrHi);
+      
+      if (minSnr < 14) {
+        return; // Veto: insufficient SNR
+      }
+      
+      // Track notch history for rolling median
+      notchHistory.push({ time: now, power: notchPower });
+      notchHistory = notchHistory.filter(n => (now - n.time) <= 5);
+      
+      // Check notch is below rolling median
+      if (notchHistory.length >= 10) {
+        const notchValues = notchHistory.map(n => n.power).sort((a, b) => a - b);
+        const notchMedian = notchValues[Math.floor(notchValues.length / 2)];
+        
+        if (notchPower > notchMedian - 1.6) {
+          return; // Veto: notch not deep enough vs history
+        }
+      }
+      
+      // Check 3 sub-bands within notch are all below threshold
+      const notchBandwidth = notchHigh - notchLow;
+      const subBand1 = computeBandPower(dataArray, binHz, notchLow, notchLow + notchBandwidth / 3);
+      const subBand2 = computeBandPower(dataArray, binHz, notchLow + notchBandwidth / 3, notchLow + 2 * notchBandwidth / 3);
+      const subBand3 = computeBandPower(dataArray, binHz, notchLow + 2 * notchBandwidth / 3, notchHigh);
+      
+      const subBandThreshold = guardAvg - 12; // All subs should be at least 12 dB below guards
+      if (subBand1 > subBandThreshold || subBand2 > subBandThreshold || subBand3 > subBandThreshold) {
+        return; // Veto: sub-bands not all depressed
+      }
       
       // Update EMA floors
       const alpha = 0.05;
@@ -983,22 +1071,95 @@
       document.getElementById('guardPower').textContent = guardAvg.toFixed(1) + ' dB';
       document.getElementById('ratioPower').textContent = ratio.toFixed(1) + ' dB';
       
-      // Detection logic
+      // 5. PERSISTENCE (morphology)
+      // Track this frame as "candidate" (passed all vetoes)
       const ratioThreshold = parseFloat(document.getElementById('ratioThreshold').value);
-      const minInterHit = parseFloat(document.getElementById('minInterHit').value);
-      const now = audioContext.currentTime;
       
-      if (ratio >= ratioThreshold && (now - lastHitTime) >= minInterHit) {
-        // Hit detected!
-        hitTimestamps.push(now);
-        lastHitTime = now;
-        totalHitsDetected++;
+      const framePassesCriteria = ratio >= ratioThreshold;
+      persistenceFrames.push({ time: now, passes: framePassesCriteria });
+      
+      // Keep last 1 second
+      persistenceFrames = persistenceFrames.filter(f => (now - f.time) <= 1);
+      
+      // Check for contiguous run of ≥ 120ms (≥5 frames at ~24fps)
+      const requiredFrames = 5;
+      const maxGapFrames = 1;
+      
+      let contiguousCount = 0;
+      let gapCount = 0;
+      let hasValidRun = false;
+      
+      for (let i = persistenceFrames.length - 1; i >= 0; i--) {
+        if (persistenceFrames[i].passes) {
+          contiguousCount++;
+          gapCount = 0;
+        } else {
+          gapCount++;
+          if (gapCount > maxGapFrames) {
+            break; // Run ended
+          }
+        }
         
-        document.getElementById('lastHitTime').textContent = new Date().toLocaleTimeString();
-        document.getElementById('totalHits').textContent = totalHitsDetected;
-        
-        console.log('Drop detected! Ratio:', ratio.toFixed(2), 'dB');
+        if (contiguousCount >= requiredFrames) {
+          hasValidRun = true;
+          break;
+        }
       }
+      
+      if (!hasValidRun) {
+        return; // Veto: no persistent run
+      }
+      
+      // 6. PILOT SHAPING
+      // Detect two-pulse pattern with 300ms spacing (±25ms)
+      const minInterHit = parseFloat(document.getElementById('minInterHit').value);
+      
+      // This is a "candidate hit" - check if it forms a pilot pair
+      const pilotSpacing = 0.3; // 300ms
+      const pilotTolerance = 0.025; // ±25ms
+      const refractoryPeriod = 1.2; // 1.2s
+      
+      // Check if this hit pairs with a recent hit
+      let isPilot = false;
+      for (let i = pilotTimestamps.length - 1; i >= 0; i--) {
+        const prevPilot = pilotTimestamps[i];
+        const timeDiff = now - prevPilot;
+        
+        if (Math.abs(timeDiff - pilotSpacing) <= pilotTolerance) {
+          // Valid pilot pair!
+          isPilot = true;
+          break;
+        }
+        
+        if (timeDiff > pilotSpacing + pilotTolerance) {
+          break; // Too far back
+        }
+      }
+      
+      // Add this timestamp as potential pilot
+      pilotTimestamps.push(now);
+      pilotTimestamps = pilotTimestamps.filter(t => (now - t) <= 12); // Keep 12s window
+      
+      // Apply refractory period
+      if ((now - lastHitTime) < refractoryPeriod && !isPilot) {
+        return; // Too soon after last hit, not a pilot pair
+      }
+      
+      // Only count as hit if it's part of a pilot pattern
+      if (!isPilot) {
+        return; // Not a valid pilot
+      }
+      
+      // === ALL CHECKS PASSED - REGISTER HIT ===
+      
+      hitTimestamps.push(now);
+      lastHitTime = now;
+      totalHitsDetected++;
+      
+      document.getElementById('lastHitTime').textContent = new Date().toLocaleTimeString();
+      document.getElementById('totalHits').textContent = totalHitsDetected;
+      
+      console.log('Drop detected! Ratio:', ratio.toFixed(2), 'dB, SNR:', minSnr.toFixed(1), 'dB');
       
       // Clean old hits
       const windowS = parseFloat(document.getElementById('windowS').value);
@@ -1008,14 +1169,52 @@
       document.getElementById('rollingHits').textContent = hitTimestamps.length;
       document.getElementById('hitsReq').textContent = hitsRequired;
       
-      // Check verification
-      if (hitTimestamps.length >= hitsRequired && !presenceVerified) {
+      // Check verification - need 2 pilots within 12s
+      const recentPilots = pilotTimestamps.filter(t => (now - t) <= 12);
+      if (recentPilots.length >= 2 && hitTimestamps.length >= hitsRequired && !presenceVerified) {
         presenceVerified = true;
         const badge = document.getElementById('presenceBadge');
         badge.textContent = '✅ Presence Verified!';
         badge.classList.add('verified');
         console.log('PRESENCE VERIFIED!');
       }
+    }
+    
+    function computeRmsFromFreqData(freqData) {
+      // Approximate RMS from frequency magnitude data
+      // Convert dB back to linear, compute RMS
+      let sumSq = 0;
+      let count = 0;
+      for (let i = 0; i < freqData.length; i++) {
+        if (freqData[i] > -120) {
+          const linear = Math.pow(10, freqData[i] / 20);
+          sumSq += linear * linear;
+          count++;
+        }
+      }
+      const rms = count > 0 ? Math.sqrt(sumSq / count) : 1e-10;
+      return linearToDb(rms);
+    }
+    
+    function computeSpectralFlux(freqData) {
+      // Simple spectral flux: sum of absolute differences
+      // Store previous frame for comparison
+      if (!computeSpectralFlux.prevFrame) {
+        computeSpectralFlux.prevFrame = new Float32Array(freqData.length);
+        freqData.forEach((v, i) => computeSpectralFlux.prevFrame[i] = v);
+        return 0;
+      }
+      
+      let flux = 0;
+      for (let i = 0; i < freqData.length; i++) {
+        const diff = freqData[i] - computeSpectralFlux.prevFrame[i];
+        flux += Math.abs(diff);
+      }
+      
+      // Update prev frame
+      freqData.forEach((v, i) => computeSpectralFlux.prevFrame[i] = v);
+      
+      return flux;
     }
 
     function computeBandPower(dataArray, binHz, lowHz, highHz) {
@@ -1066,6 +1265,11 @@
       totalHitsDetected = 0;
       presenceVerified = false;
       bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+      prevFrameRms = -120;
+      spectralFluxHistory = [];
+      notchHistory = [];
+      persistenceFrames = [];
+      pilotTimestamps = [];
       
       document.getElementById('rollingHits').textContent = '0';
       document.getElementById('lastHitTime').textContent = '—';
