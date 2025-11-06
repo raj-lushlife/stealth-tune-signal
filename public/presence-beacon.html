@@ -359,6 +359,12 @@
 
         <div class="subsection">
           <h3>Scheduling</h3>
+          <div class="control-group">
+            <div class="checkbox-wrapper">
+              <input type="checkbox" id="pinkNoiseOnly">
+              <label for="pinkNoiseOnly">Pink Noise Only (No Drops) - for testing</label>
+            </div>
+          </div>
           <div class="grid-2col">
             <div class="control-group">
               <label>Repeat Every (s):</label>
@@ -751,13 +757,18 @@
       
       bedSource.start(0);
       
-      document.getElementById('txStatus').textContent = 'Running';
+      const pinkNoiseOnly = document.getElementById('pinkNoiseOnly').checked;
       
-      // Schedule drops
-      scheduleNextDrop();
-      
-      // Update countdown
-      updateDropCountdown();
+      if (pinkNoiseOnly) {
+        document.getElementById('txStatus').textContent = 'Running (Pink Noise Only - No Drops)';
+        document.getElementById('nextDropCountdown').textContent = 'N/A (No Drops Mode)';
+      } else {
+        document.getElementById('txStatus').textContent = 'Running';
+        // Schedule drops
+        scheduleNextDrop();
+        // Update countdown
+        updateDropCountdown();
+      }
     }
 
     function scheduleNextDrop() {
