@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Over-air presence beacon using imperceptible audio drops">
+  <title>Presence Beacon - Imperceptible Audio Drops</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      padding: 16px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 24px;
+      margin-bottom: 16px;
+      text-align: center;
+      color: #fff;
+    }
+
+    .instructions {
+      background: #2a2a2a;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      border-left: 4px solid #4CAF50;
+    }
+
+    .instructions h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+      color: #4CAF50;
+    }
+
+    .instructions ol {
+      margin-left: 20px;
+    }
+
+    .instructions li {
+      margin: 8px 0;
+    }
+
+    .global-controls {
+      background: #2a2a2a;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+
+    .btn {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 8px;
+      min-width: 140px;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background: #45a049;
+    }
+
+    .btn:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+
+    .btn-stop {
+      background: #f44336;
+    }
+
+    .btn-stop:hover {
+      background: #da190b;
+    }
+
+    .btn-secondary {
+      background: #2196F3;
+    }
+
+    .btn-secondary:hover {
+      background: #0b7dda;
+    }
+
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      background: #333;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 968px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .section {
+      background: #2a2a2a;
+      padding: 24px;
+      border-radius: 8px;
+    }
+
+    .section h2 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #4CAF50;
+      border-bottom: 2px solid #4CAF50;
+      padding-bottom: 8px;
+    }
+
+    .control-group {
+      margin-bottom: 20px;
+    }
+
+    .control-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+      color: #bbb;
+    }
+
+    .control-group input[type="number"],
+    .control-group input[type="file"] {
+      width: 100%;
+      padding: 10px;
+      background: #333;
+      border: 1px solid #555;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 14px;
+    }
+
+    .control-group input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+
+    .checkbox-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .readout {
+      background: #1a1a1a;
+      padding: 12px;
+      border-radius: 4px;
+      margin-top: 8px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: #4CAF50;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .subsection {
+      background: #333;
+      padding: 16px;
+      border-radius: 6px;
+      margin-top: 16px;
+    }
+
+    .subsection h3 {
+      font-size: 16px;
+      margin-bottom: 12px;
+      color: #2196F3;
+    }
+
+    .presence-badge {
+      margin-top: 20px;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 18px;
+      font-weight: bold;
+      background: #555;
+      color: #999;
+      border: 3px solid #555;
+    }
+
+    .presence-badge.verified {
+      background: #1b5e20;
+      color: #4CAF50;
+      border-color: #4CAF50;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .warning-banner {
+      background: #ff9800;
+      color: #000;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      text-align: center;
+      font-weight: bold;
+      display: none;
+    }
+
+    .warning-banner.show {
+      display: block;
+    }
+
+    input[type="file"] {
+      padding: 8px !important;
+    }
+
+    .grid-2col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .grid-2col {
+        grid-template-columns: 1fr;
+      }
+      .btn {
+        width: 100%;
+      }
+    }
+
+    .band-display {
+      display: flex;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .band-meter {
+      flex: 1;
+      background: #1a1a1a;
+      padding: 12px;
+      border-radius: 4px;
+      text-align: center;
+    }
+
+    .band-meter .label {
+      font-size: 12px;
+      color: #bbb;
+      margin-bottom: 4px;
+    }
+
+    .band-meter .value {
+      font-size: 18px;
+      font-weight: bold;
+      color: #4CAF50;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎵 Presence Beacon - Imperceptible Audio Drops</h1>
+
+    <div class="instructions">
+      <h2>How to Use</h2>
+      <ol>
+        <li><strong>Start Audio</strong> - Click the global "Start Audio" button below (required for iOS)</li>
+        <li><strong>Load Music</strong> - Upload a song in TX section, or leave empty for pink noise demo</li>
+        <li><strong>Start TX</strong> - On laptop/desktop, click "Start TX" or "Smoke Test TX" for defaults</li>
+        <li><strong>Open on iPhone</strong> - Open this same HTML file on your iPhone, tap "Start Audio"</li>
+        <li><strong>Start RX</strong> - Click "Start RX" on iPhone, place mic 20-40cm from speaker at normal volume</li>
+        <li><strong>Wait for Verification</strong> - Wait 30-60 seconds for 1-3 drops. "Presence Verified" badge will light up</li>
+        <li><strong>Production Tuning</strong> - Increase RX threshold to ~3.5 dB and hits_required to 3-4 for stricter verification</li>
+      </ol>
+    </div>
+
+    <div class="warning-banner" id="iosWarning">
+      ⚠️ Audio Context Interrupted - Tap "Resume Audio" to continue
+    </div>
+
+    <div class="global-controls">
+      <button id="startAudioBtn" class="btn">▶ Start Audio</button>
+      <button id="resumeAudioBtn" class="btn btn-secondary" style="display:none;">Resume Audio</button>
+      <div class="status">
+        <div><strong>Status:</strong> <span id="globalStatus">Not started</span></div>
+        <div><strong>Sample Rate:</strong> <span id="sampleRate">—</span> Hz</div>
+        <div><strong>Audio Context State:</strong> <span id="ctxState">—</span></div>
+      </div>
+    </div>
+
+    <div class="main-grid">
+      <!-- ENCODER (TX) SECTION -->
+      <div class="section">
+        <h2>📡 ENCODER (TX)</h2>
+
+        <div class="control-group">
+          <label>Music Bed (mp3/wav, optional):</label>
+          <input type="file" id="bedFile" accept="audio/*">
+          <div class="readout">If no file: generates pink noise bed at low level for demo</div>
+        </div>
+
+        <div class="subsection">
+          <h3>Drop Parameters</h3>
+          <div class="grid-2col">
+            <div class="control-group">
+              <label>Drop Center (Hz):</label>
+              <input type="number" id="dropCenter" value="8000" min="1000" max="20000">
+            </div>
+            <div class="control-group">
+              <label>Drop Bandwidth (Hz):</label>
+              <input type="number" id="dropBw" value="600" min="100" max="2000">
+            </div>
+            <div class="control-group">
+              <label>Drop Depth (dB):</label>
+              <input type="number" id="dropDepth" value="-2.0" min="-4" max="-0.5" step="0.1">
+            </div>
+            <div class="control-group">
+              <label>Drop Length (ms):</label>
+              <input type="number" id="dropLen" value="160" min="50" max="500">
+            </div>
+            <div class="control-group">
+              <label>Fade In (ms):</label>
+              <input type="number" id="fadeIn" value="12" min="5" max="50">
+            </div>
+            <div class="control-group">
+              <label>Fade Out (ms):</label>
+              <input type="number" id="fadeOut" value="12" min="5" max="50">
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h3>Scheduling</h3>
+          <div class="grid-2col">
+            <div class="control-group">
+              <label>Repeat Every (s):</label>
+              <input type="number" id="repeatEvery" value="10" min="2" max="60" step="0.5">
+            </div>
+            <div class="control-group">
+              <label>Jitter ± (s):</label>
+              <input type="number" id="jitter" value="2" min="0" max="10" step="0.5">
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h3>Masking Gate</h3>
+          <div class="control-group">
+            <div class="checkbox-wrapper">
+              <input type="checkbox" id="maskingOn" checked>
+              <label for="maskingOn">Enable Masking (schedule drops only during loud moments)</label>
+            </div>
+          </div>
+          <div class="grid-2col">
+            <div class="control-group">
+              <label>Window (ms):</label>
+              <input type="number" id="maskWin" value="50" min="20" max="200">
+            </div>
+            <div class="control-group">
+              <label>Hop (ms):</label>
+              <input type="number" id="maskHop" value="25" min="10" max="100">
+            </div>
+            <div class="control-group">
+              <label>Threshold Rel. dB:</label>
+              <input type="number" id="maskThreshold" value="-18" min="-30" max="0" step="0.5">
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label>Output Gain (dB):</label>
+          <input type="number" id="outputGain" value="0" min="-20" max="6" step="0.5">
+        </div>
+
+        <div class="button-row">
+          <button id="startTxBtn" class="btn">Start TX</button>
+          <button id="stopTxBtn" class="btn btn-stop" disabled>Stop TX</button>
+          <button id="smokeTestBtn" class="btn btn-secondary">Smoke Test TX</button>
+        </div>
+
+        <div class="readout" id="txReadout">
+          <div><strong>Status:</strong> <span id="txStatus">Idle</span></div>
+          <div><strong>Next Drop In:</strong> <span id="nextDropCountdown">—</span></div>
+          <div><strong>Last Scheduled:</strong> <span id="lastScheduled">—</span></div>
+          <div><strong>Last Masking RMS:</strong> <span id="lastMaskingRms">—</span></div>
+          <div><strong>Total Drops:</strong> <span id="totalDrops">0</span></div>
+        </div>
+      </div>
+
+      <!-- LISTENER (RX) SECTION -->
+      <div class="section">
+        <h2>🎤 LISTENER (RX)</h2>
+
+        <div class="subsection">
+          <h3>Band Definitions (Hz)</h3>
+          <div class="control-group">
+            <label>Notch Band:</label>
+            <div class="grid-2col">
+              <input type="number" id="notchLow" value="7700" min="1000" max="20000" placeholder="Low">
+              <input type="number" id="notchHigh" value="8300" min="1000" max="20000" placeholder="High">
+            </div>
+          </div>
+          <div class="control-group">
+            <label>Guard Band Low:</label>
+            <div class="grid-2col">
+              <input type="number" id="guardLoLow" value="7000" min="1000" max="20000" placeholder="Low">
+              <input type="number" id="guardLoHigh" value="7600" min="1000" max="20000" placeholder="High">
+            </div>
+          </div>
+          <div class="control-group">
+            <label>Guard Band High:</label>
+            <div class="grid-2col">
+              <input type="number" id="guardHiLow" value="8400" min="1000" max="20000" placeholder="Low">
+              <input type="number" id="guardHiHigh" value="9000" min="1000" max="20000" placeholder="High">
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h3>Detection Parameters</h3>
+          <div class="grid-2col">
+            <div class="control-group">
+              <label>Ratio Threshold (dB):</label>
+              <input type="number" id="ratioThreshold" value="2.5" min="0" max="10" step="0.1">
+            </div>
+            <div class="control-group">
+              <label>Hits Required:</label>
+              <input type="number" id="hitsRequired" value="2" min="1" max="10">
+            </div>
+            <div class="control-group">
+              <label>Window (s):</label>
+              <input type="number" id="windowS" value="12" min="2" max="60">
+            </div>
+            <div class="control-group">
+              <label>Min Inter-Hit Spacing (s):</label>
+              <input type="number" id="minInterHit" value="0.5" min="0.1" max="5" step="0.1">
+            </div>
+          </div>
+        </div>
+
+        <div class="button-row">
+          <button id="startRxBtn" class="btn">Start RX</button>
+          <button id="stopRxBtn" class="btn btn-stop" disabled>Stop RX</button>
+          <button id="resetRxBtn" class="btn btn-secondary">Reset Detection</button>
+        </div>
+
+        <div class="band-display">
+          <div class="band-meter">
+            <div class="label">Notch</div>
+            <div class="value" id="notchPower">— dB</div>
+          </div>
+          <div class="band-meter">
+            <div class="label">Guard Avg</div>
+            <div class="value" id="guardPower">— dB</div>
+          </div>
+          <div class="band-meter">
+            <div class="label">Ratio</div>
+            <div class="value" id="ratioPower">— dB</div>
+          </div>
+        </div>
+
+        <div class="readout" id="rxReadout">
+          <div><strong>Status:</strong> <span id="rxStatus">Idle</span></div>
+          <div><strong>Rolling Hits:</strong> <span id="rollingHits">0</span> / <span id="hitsReq">2</span></div>
+          <div><strong>Last Hit Time:</strong> <span id="lastHitTime">—</span></div>
+          <div><strong>Total Hits:</strong> <span id="totalHits">0</span></div>
+        </div>
+
+        <div class="presence-badge" id="presenceBadge">
+          ⏳ Waiting for Presence...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ==================== GLOBAL STATE ====================
+    let audioContext = null;
+    let masterGain = null;
+    let txRunning = false;
+    let rxRunning = false;
+
+    // TX State
+    let bedBuffer = null;
+    let bedSource = null;
+    let peakingEQ = null;
+    let dropScheduleTimer = null;
+    let nextDropTime = null;
+    let candidateFrames = []; // {time, rms} for masking
+    let globalRMS = 0;
+    let totalDropsScheduled = 0;
+
+    // RX State
+    let micStream = null;
+    let micSource = null;
+    let analyser = null;
+    let rxInterval = null;
+    let hitTimestamps = [];
+    let lastHitTime = 0;
+    let totalHitsDetected = 0;
+    let presenceVerified = false;
+    let bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+
+    // ==================== UTILITY FUNCTIONS ====================
+    
+    function updateStatus(msg) {
+      document.getElementById('globalStatus').textContent = msg;
+    }
+
+    function updateCtxState() {
+      if (audioContext) {
+        document.getElementById('ctxState').textContent = audioContext.state;
+        if (audioContext.state === 'interrupted') {
+          document.getElementById('iosWarning').classList.add('show');
+        } else {
+          document.getElementById('iosWarning').classList.remove('show');
+        }
+      }
+    }
+
+    function dbToLinear(db) {
+      return Math.pow(10, db / 20);
+    }
+
+    function linearToDb(linear) {
+      return 20 * Math.log10(Math.max(linear, 1e-10));
+    }
+
+    function clamp(val, min, max) {
+      return Math.max(min, Math.min(max, val));
+    }
+
+    function randomJitter(jitterS) {
+      return (Math.random() * 2 - 1) * jitterS;
+    }
+
+    // ==================== PINK NOISE GENERATOR ====================
+    
+    function generatePinkNoise(duration, sampleRate) {
+      const length = duration * sampleRate;
+      const buffer = audioContext.createBuffer(1, length, sampleRate);
+      const output = buffer.getChannelData(0);
+      
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+      for (let i = 0; i < length; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        output[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+        b6 = white * 0.115926;
+      }
+      
+      // Low level for demo
+      for (let i = 0; i < length; i++) {
+        output[i] *= 0.15;
+      }
+      
+      return buffer;
+    }
+
+    // ==================== RMS PRE-SCAN FOR MASKING ====================
+    
+    async function preScanForMasking(buffer) {
+      const maskWinMs = parseFloat(document.getElementById('maskWin').value);
+      const maskHopMs = parseFloat(document.getElementById('maskHop').value);
+      const maskThresholdDb = parseFloat(document.getElementById('maskThreshold').value);
+      
+      const sampleRate = buffer.sampleRate;
+      const winSamples = Math.floor((maskWinMs / 1000) * sampleRate);
+      const hopSamples = Math.floor((maskHopMs / 1000) * sampleRate);
+      
+      // Use offline context for analysis
+      const offlineCtx = new OfflineAudioContext(1, buffer.length, sampleRate);
+      const source = offlineCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(offlineCtx.destination);
+      source.start(0);
+      
+      const rendered = await offlineCtx.startRendering();
+      const channelData = rendered.getChannelData(0);
+      
+      // Compute global RMS
+      let sumSq = 0;
+      for (let i = 0; i < channelData.length; i++) {
+        sumSq += channelData[i] * channelData[i];
+      }
+      globalRMS = Math.sqrt(sumSq / channelData.length);
+      const globalRmsDb = linearToDb(globalRMS);
+      
+      // Sliding window RMS
+      candidateFrames = [];
+      for (let i = 0; i + winSamples < channelData.length; i += hopSamples) {
+        let winSumSq = 0;
+        for (let j = 0; j < winSamples; j++) {
+          const sample = channelData[i + j];
+          winSumSq += sample * sample;
+        }
+        const winRms = Math.sqrt(winSumSq / winSamples);
+        const winRmsDb = linearToDb(winRms);
+        const time = i / sampleRate;
+        
+        // Check if meets masking threshold
+        if (winRmsDb >= globalRmsDb + maskThresholdDb) {
+          candidateFrames.push({ time, rms: winRmsDb });
+        }
+      }
+      
+      console.log(`Pre-scan complete: globalRMS=${globalRmsDb.toFixed(2)} dB, candidates=${candidateFrames.length}`);
+    }
+
+    // ==================== AUDIO CONTEXT SETUP ====================
+    
+    async function initAudioContext() {
+      if (audioContext) {
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+        return;
+      }
+      
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioContext.createGain();
+      masterGain.connect(audioContext.destination);
+      
+      document.getElementById('sampleRate').textContent = audioContext.sampleRate;
+      updateStatus('Audio context ready');
+      updateCtxState();
+      
+      // iOS recovery on visibility change
+      document.addEventListener('visibilitychange', async () => {
+        if (!document.hidden && audioContext && audioContext.state === 'suspended') {
+          await audioContext.resume();
+          updateCtxState();
+        }
+      });
+      
+      // Monitor state changes
+      audioContext.addEventListener('statechange', () => {
+        updateCtxState();
+      });
+    }
+
+    // ==================== TX: ENCODER ====================
+    
+    async function startTX() {
+      if (txRunning) return;
+      
+      if (!audioContext) {
+        alert('Please click "Start Audio" first');
+        return;
+      }
+      
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+      
+      txRunning = true;
+      totalDropsScheduled = 0;
+      document.getElementById('startTxBtn').disabled = true;
+      document.getElementById('stopTxBtn').disabled = false;
+      document.getElementById('txStatus').textContent = 'Loading...';
+      
+      // Get or generate bed
+      const fileInput = document.getElementById('bedFile');
+      if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        const arrayBuffer = await file.arrayBuffer();
+        bedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      } else {
+        // Generate pink noise
+        bedBuffer = generatePinkNoise(120, audioContext.sampleRate); // 2 min demo
+      }
+      
+      // Pre-scan for masking if enabled
+      const maskingOn = document.getElementById('maskingOn').checked;
+      if (maskingOn) {
+        document.getElementById('txStatus').textContent = 'Scanning for loud moments...';
+        await preScanForMasking(bedBuffer);
+      } else {
+        candidateFrames = [];
+      }
+      
+      // Set up audio graph: Source -> PeakingEQ -> MasterGain -> destination
+      bedSource = audioContext.createBufferSource();
+      bedSource.buffer = bedBuffer;
+      bedSource.loop = true;
+      
+      peakingEQ = audioContext.createBiquadFilter();
+      peakingEQ.type = 'peaking';
+      const dropCenter = parseFloat(document.getElementById('dropCenter').value);
+      const dropBw = parseFloat(document.getElementById('dropBw').value);
+      peakingEQ.frequency.value = dropCenter;
+      peakingEQ.Q.value = dropCenter / dropBw;
+      peakingEQ.gain.value = 0; // Start at 0, will modulate
+      
+      const outputGainDb = parseFloat(document.getElementById('outputGain').value);
+      masterGain.gain.value = dbToLinear(outputGainDb);
+      
+      bedSource.connect(peakingEQ);
+      peakingEQ.connect(masterGain);
+      
+      bedSource.start(0);
+      
+      document.getElementById('txStatus').textContent = 'Running';
+      
+      // Schedule drops
+      scheduleNextDrop();
+      
+      // Update countdown
+      updateDropCountdown();
+    }
+
+    function scheduleNextDrop() {
+      if (!txRunning) return;
+      
+      const now = audioContext.currentTime;
+      const repeatS = parseFloat(document.getElementById('repeatEvery').value);
+      const jitterS = parseFloat(document.getElementById('jitter').value);
+      const maskingOn = document.getElementById('maskingOn').checked;
+      
+      let targetTime = now + repeatS + randomJitter(jitterS);
+      
+      // Find nearest candidate frame if masking ON
+      let actualTime = targetTime;
+      let maskingRms = null;
+      if (maskingOn && candidateFrames.length > 0) {
+        const bedStartTime = bedSource._startTime || 0; // Track offset if needed
+        const relativeTarget = targetTime - now + (now - bedStartTime);
+        
+        // Find candidate closest to target
+        let bestCandidate = null;
+        let bestDiff = Infinity;
+        const maxSearch = repeatS + jitterS * 2;
+        
+        for (const frame of candidateFrames) {
+          const diff = Math.abs(frame.time - relativeTarget);
+          if (diff < bestDiff && frame.time >= relativeTarget && diff < maxSearch) {
+            bestDiff = diff;
+            bestCandidate = frame;
+          }
+        }
+        
+        if (bestCandidate) {
+          actualTime = now + (bestCandidate.time - relativeTarget);
+          maskingRms = bestCandidate.rms;
+          document.getElementById('lastMaskingRms').textContent = maskingRms.toFixed(2) + ' dBFS';
+        } else {
+          // Fallback: use target time with shallower depth
+          const dropDepth = parseFloat(document.getElementById('dropDepth').value);
+          const fallbackDepth = Math.max(-4, dropDepth + 1); // 1 dB less deep
+          console.warn('No masking candidate found, using fallback at', actualTime.toFixed(3), 'with depth', fallbackDepth);
+          document.getElementById('lastMaskingRms').textContent = 'Fallback (quieter)';
+        }
+      }
+      
+      nextDropTime = actualTime;
+      
+      // Schedule the drop automation
+      const dropDepth = parseFloat(document.getElementById('dropDepth').value);
+      const dropLenMs = parseFloat(document.getElementById('dropLen').value);
+      const fadeInMs = parseFloat(document.getElementById('fadeIn').value);
+      const fadeOutMs = parseFloat(document.getElementById('fadeOut').value);
+      
+      const dropLenS = dropLenMs / 1000;
+      const fadeInS = fadeInMs / 1000;
+      const fadeOutS = fadeOutMs / 1000;
+      const holdTime = Math.max(0, dropLenS - fadeInS - fadeOutS);
+      
+      const gain = peakingEQ.gain;
+      
+      // Ramp down to dropDepth
+      gain.setValueAtTime(0, actualTime);
+      gain.linearRampToValueAtTime(dropDepth, actualTime + fadeInS);
+      // Hold
+      gain.setValueAtTime(dropDepth, actualTime + fadeInS + holdTime);
+      // Ramp back up
+      gain.linearRampToValueAtTime(0, actualTime + fadeInS + holdTime + fadeOutS);
+      
+      totalDropsScheduled++;
+      document.getElementById('totalDrops').textContent = totalDropsScheduled;
+      document.getElementById('lastScheduled').textContent = new Date().toLocaleTimeString();
+      
+      // Schedule next
+      const delay = (repeatS + randomJitter(jitterS)) * 1000;
+      dropScheduleTimer = setTimeout(() => scheduleNextDrop(), delay);
+    }
+
+    function updateDropCountdown() {
+      if (!txRunning) return;
+      
+      if (nextDropTime && audioContext) {
+        const remaining = nextDropTime - audioContext.currentTime;
+        if (remaining > 0) {
+          document.getElementById('nextDropCountdown').textContent = remaining.toFixed(1) + ' s';
+        } else {
+          document.getElementById('nextDropCountdown').textContent = 'Imminent';
+        }
+      }
+      
+      requestAnimationFrame(updateDropCountdown);
+    }
+
+    function stopTX() {
+      if (!txRunning) return;
+      
+      txRunning = false;
+      
+      if (dropScheduleTimer) {
+        clearTimeout(dropScheduleTimer);
+        dropScheduleTimer = null;
+      }
+      
+      if (bedSource) {
+        bedSource.stop();
+        bedSource.disconnect();
+        bedSource = null;
+      }
+      
+      if (peakingEQ) {
+        peakingEQ.disconnect();
+        peakingEQ = null;
+      }
+      
+      document.getElementById('startTxBtn').disabled = false;
+      document.getElementById('stopTxBtn').disabled = true;
+      document.getElementById('txStatus').textContent = 'Stopped';
+      document.getElementById('nextDropCountdown').textContent = '—';
+    }
+
+    function applySmokeTest() {
+      // TX defaults
+      document.getElementById('dropCenter').value = 8000;
+      document.getElementById('dropBw').value = 600;
+      document.getElementById('dropDepth').value = -2.0;
+      document.getElementById('dropLen').value = 160;
+      document.getElementById('fadeIn').value = 12;
+      document.getElementById('fadeOut').value = 12;
+      document.getElementById('repeatEvery').value = 10;
+      document.getElementById('jitter').value = 2;
+      document.getElementById('maskingOn').checked = true;
+      document.getElementById('maskWin').value = 50;
+      document.getElementById('maskHop').value = 25;
+      document.getElementById('maskThreshold').value = -18;
+      document.getElementById('outputGain').value = 0;
+      
+      // RX defaults
+      document.getElementById('notchLow').value = 7700;
+      document.getElementById('notchHigh').value = 8300;
+      document.getElementById('guardLoLow').value = 7000;
+      document.getElementById('guardLoHigh').value = 7600;
+      document.getElementById('guardHiLow').value = 8400;
+      document.getElementById('guardHiHigh').value = 9000;
+      document.getElementById('ratioThreshold').value = 2.5;
+      document.getElementById('hitsRequired').value = 2;
+      document.getElementById('windowS').value = 12;
+      document.getElementById('minInterHit').value = 0.5;
+      
+      alert('Smoke test defaults loaded! Click Start TX to begin.');
+    }
+
+    // ==================== RX: LISTENER ====================
+    
+    async function startRX() {
+      if (rxRunning) return;
+      
+      if (!audioContext) {
+        alert('Please click "Start Audio" first');
+        return;
+      }
+      
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+      
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        alert('Microphone access denied: ' + e.message);
+        return;
+      }
+      
+      rxRunning = true;
+      document.getElementById('startRxBtn').disabled = true;
+      document.getElementById('stopRxBtn').disabled = false;
+      document.getElementById('rxStatus').textContent = 'Listening...';
+      
+      // Set up mic pipeline: Mic -> HPF -> Analyser
+      micSource = audioContext.createMediaStreamSource(micStream);
+      
+      const hpf = audioContext.createBiquadFilter();
+      hpf.type = 'highpass';
+      hpf.frequency.value = 200;
+      
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 4096;
+      analyser.smoothingTimeConstant = 0.8;
+      
+      micSource.connect(hpf);
+      hpf.connect(analyser);
+      
+      // Reset detection state
+      hitTimestamps = [];
+      lastHitTime = 0;
+      totalHitsDetected = 0;
+      bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+      
+      // Start detection loop
+      rxInterval = setInterval(detectDrop, 120);
+    }
+
+    function detectDrop() {
+      if (!rxRunning || !analyser) return;
+      
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Float32Array(bufferLength);
+      analyser.getFloatFrequencyData(dataArray);
+      
+      const sampleRate = audioContext.sampleRate;
+      const binHz = (sampleRate / 2) / (bufferLength - 1);
+      
+      // Get band ranges
+      const notchLow = parseFloat(document.getElementById('notchLow').value);
+      const notchHigh = parseFloat(document.getElementById('notchHigh').value);
+      const guardLoLow = parseFloat(document.getElementById('guardLoLow').value);
+      const guardLoHigh = parseFloat(document.getElementById('guardLoHigh').value);
+      const guardHiLow = parseFloat(document.getElementById('guardHiLow').value);
+      const guardHiHigh = parseFloat(document.getElementById('guardHiHigh').value);
+      
+      // Compute band powers
+      const notchPower = computeBandPower(dataArray, binHz, notchLow, notchHigh);
+      const guardLoPower = computeBandPower(dataArray, binHz, guardLoLow, guardLoHigh);
+      const guardHiPower = computeBandPower(dataArray, binHz, guardHiLow, guardHiHigh);
+      const guardAvg = (guardLoPower + guardHiPower) / 2;
+      
+      // Update EMA floors
+      const alpha = 0.05;
+      if (notchPower <= bandFloors.notch + 3) {
+        bandFloors.notch = bandFloors.notch * (1 - alpha) + notchPower * alpha;
+      }
+      if (guardLoPower <= bandFloors.guardLo + 3) {
+        bandFloors.guardLo = bandFloors.guardLo * (1 - alpha) + guardLoPower * alpha;
+      }
+      if (guardHiPower <= bandFloors.guardHi + 3) {
+        bandFloors.guardHi = bandFloors.guardHi * (1 - alpha) + guardHiPower * alpha;
+      }
+      
+      const ratio = guardAvg - notchPower;
+      
+      // Display
+      document.getElementById('notchPower').textContent = notchPower.toFixed(1) + ' dB';
+      document.getElementById('guardPower').textContent = guardAvg.toFixed(1) + ' dB';
+      document.getElementById('ratioPower').textContent = ratio.toFixed(1) + ' dB';
+      
+      // Detection logic
+      const ratioThreshold = parseFloat(document.getElementById('ratioThreshold').value);
+      const minInterHit = parseFloat(document.getElementById('minInterHit').value);
+      const now = audioContext.currentTime;
+      
+      if (ratio >= ratioThreshold && (now - lastHitTime) >= minInterHit) {
+        // Hit detected!
+        hitTimestamps.push(now);
+        lastHitTime = now;
+        totalHitsDetected++;
+        
+        document.getElementById('lastHitTime').textContent = new Date().toLocaleTimeString();
+        document.getElementById('totalHits').textContent = totalHitsDetected;
+        
+        console.log('Drop detected! Ratio:', ratio.toFixed(2), 'dB');
+      }
+      
+      // Clean old hits
+      const windowS = parseFloat(document.getElementById('windowS').value);
+      hitTimestamps = hitTimestamps.filter(t => (now - t) <= windowS);
+      
+      const hitsRequired = parseInt(document.getElementById('hitsRequired').value);
+      document.getElementById('rollingHits').textContent = hitTimestamps.length;
+      document.getElementById('hitsReq').textContent = hitsRequired;
+      
+      // Check verification
+      if (hitTimestamps.length >= hitsRequired && !presenceVerified) {
+        presenceVerified = true;
+        const badge = document.getElementById('presenceBadge');
+        badge.textContent = '✅ Presence Verified!';
+        badge.classList.add('verified');
+        console.log('PRESENCE VERIFIED!');
+      }
+    }
+
+    function computeBandPower(dataArray, binHz, lowHz, highHz) {
+      const lowBin = Math.floor(lowHz / binHz);
+      const highBin = Math.ceil(highHz / binHz);
+      
+      let sum = 0;
+      let count = 0;
+      for (let i = lowBin; i <= highBin && i < dataArray.length; i++) {
+        const db = Math.max(dataArray[i], -120); // Clamp -Infinity
+        sum += db;
+        count++;
+      }
+      
+      return count > 0 ? sum / count : -120;
+    }
+
+    function stopRX() {
+      if (!rxRunning) return;
+      
+      rxRunning = false;
+      
+      if (rxInterval) {
+        clearInterval(rxInterval);
+        rxInterval = null;
+      }
+      
+      if (micSource) {
+        micSource.disconnect();
+        micSource = null;
+      }
+      
+      if (micStream) {
+        micStream.getTracks().forEach(track => track.stop());
+        micStream = null;
+      }
+      
+      analyser = null;
+      
+      document.getElementById('startRxBtn').disabled = false;
+      document.getElementById('stopRxBtn').disabled = true;
+      document.getElementById('rxStatus').textContent = 'Stopped';
+    }
+
+    function resetRX() {
+      hitTimestamps = [];
+      lastHitTime = 0;
+      totalHitsDetected = 0;
+      presenceVerified = false;
+      bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+      
+      document.getElementById('rollingHits').textContent = '0';
+      document.getElementById('lastHitTime').textContent = '—';
+      document.getElementById('totalHits').textContent = '0';
+      
+      const badge = document.getElementById('presenceBadge');
+      badge.textContent = '⏳ Waiting for Presence...';
+      badge.classList.remove('verified');
+    }
+
+    // ==================== EVENT LISTENERS ====================
+    
+    document.getElementById('startAudioBtn').addEventListener('click', async () => {
+      await initAudioContext();
+      document.getElementById('startAudioBtn').style.display = 'none';
+      document.getElementById('resumeAudioBtn').style.display = 'inline-block';
+      updateStatus('Ready');
+    });
+
+    document.getElementById('resumeAudioBtn').addEventListener('click', async () => {
+      if (audioContext && audioContext.state === 'suspended') {
+        await audioContext.resume();
+        updateCtxState();
+        updateStatus('Resumed');
+      }
+    });
+
+    document.getElementById('startTxBtn').addEventListener('click', startTX);
+    document.getElementById('stopTxBtn').addEventListener('click', stopTX);
+    document.getElementById('smokeTestBtn').addEventListener('click', () => {
+      applySmokeTest();
+      setTimeout(() => startTX(), 500);
+    });
+
+    document.getElementById('startRxBtn').addEventListener('click', startRX);
+    document.getElementById('stopRxBtn').addEventListener('click', stopRX);
+    document.getElementById('resetRxBtn').addEventListener('click', resetRX);
+
+    // ==================== INIT ====================
+    
+    console.log('Presence Beacon loaded. Click "Start Audio" to begin.');
+  </script>
+</body>
+</html>
