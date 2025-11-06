@@ -545,6 +545,7 @@
     let bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
     let bandHistory = { notch: [], guardLo: [], guardHi: [] };  // Rolling window for baseline
     let dropFrameCount = 0;  // Count consecutive frames showing drop pattern
+    let lastDropDetectionTime = 0;  // Cooldown tracker to prevent multiple detections of same drop
 
     // ==================== UTILITY FUNCTIONS ====================
     
@@ -976,6 +977,7 @@
       hitTimestamps = [];
       dropDetectionTimestamps = [];
       lastHitTime = 0;
+      lastDropDetectionTime = 0;
       totalHitsDetected = 0;
       totalIndividualDrops = 0;
       bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
@@ -1084,33 +1086,44 @@
       }
       
       if (dropDetected) {
-        // Individual drop detected - add to detection history
-        dropDetectionTimestamps.push(now);
-        totalIndividualDrops++;
-        dropFrameCount = 0;  // Reset after registering drop
+        // Apply cooldown to prevent multiple detections of same drop (200ms)
+        const cooldownPeriod = 0.2; // seconds
+        const timeSinceLastDrop = now - lastDropDetectionTime;
         
-        // Log spacing from previous drop for debugging
-        if (dropDetectionTimestamps.length >= 2) {
-          const prevDrop = dropDetectionTimestamps[dropDetectionTimestamps.length - 2];
-          const actualSpacing = (now - prevDrop) * 1000;
-          console.log(`Drop #${totalIndividualDrops} detected. Spacing from prev: ${actualSpacing.toFixed(1)}ms`);
+        if (timeSinceLastDrop >= cooldownPeriod) {
+          // Individual drop detected - add to detection history
+          dropDetectionTimestamps.push(now);
+          lastDropDetectionTime = now;
+          totalIndividualDrops++;
+          dropFrameCount = 0;  // Reset after registering drop
+          
+          // Log spacing from previous drop for debugging
+          if (dropDetectionTimestamps.length >= 2) {
+            const prevDrop = dropDetectionTimestamps[dropDetectionTimestamps.length - 2];
+            const actualSpacing = (now - prevDrop) * 1000;
+            console.log(`Drop #${totalIndividualDrops} detected. Spacing from prev: ${actualSpacing.toFixed(1)}ms`);
+          } else {
+            console.log(`Drop #${totalIndividualDrops} detected (first drop)`);
+          }
+          
+          document.getElementById('individualDrops').textContent = totalIndividualDrops;
+          
+          // Check if this drop completes a valid pair
+          if (checkForPairPattern(now)) {
+            // Valid pair found!
+            hitTimestamps.push(now);
+            lastHitTime = now;
+            totalHitsDetected++;
+            
+            document.getElementById('lastHitTime').textContent = new Date().toLocaleTimeString();
+            document.getElementById('totalHits').textContent = totalHitsDetected;
+            
+            console.log('Valid PAIR detected! Second drop at', now.toFixed(3), 'matched with earlier drop. Ratio:', ratio.toFixed(2), 'dB');
+          }
         } else {
-          console.log(`Drop #${totalIndividualDrops} detected (first drop)`);
-        }
-        
-        document.getElementById('individualDrops').textContent = totalIndividualDrops;
-        
-        // Check if this drop completes a valid pair
-        if (checkForPairPattern(now)) {
-          // Valid pair found!
-          hitTimestamps.push(now);
-          lastHitTime = now;
-          totalHitsDetected++;
-          
-          document.getElementById('lastHitTime').textContent = new Date().toLocaleTimeString();
-          document.getElementById('totalHits').textContent = totalHitsDetected;
-          
-          console.log('Valid PAIR detected! Second drop at', now.toFixed(3), 'matched with earlier drop. Ratio:', ratio.toFixed(2), 'dB');
+          // Drop detected but still in cooldown period - ignore
+          const cooldownRemaining = ((cooldownPeriod - timeSinceLastDrop) * 1000).toFixed(0);
+          console.log(`Drop detected but in cooldown (${cooldownRemaining}ms remaining) - ignoring`);
         }
       }
       
@@ -1227,6 +1240,7 @@
       hitTimestamps = [];
       dropDetectionTimestamps = [];
       lastHitTime = 0;
+      lastDropDetectionTime = 0;
       totalHitsDetected = 0;
       totalIndividualDrops = 0;
       presenceVerified = false;
