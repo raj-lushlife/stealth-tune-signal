@@ -528,6 +528,8 @@
     let totalHitsDetected = 0;
     let presenceVerified = false;
     let bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+    let bandHistory = { notch: [], guardLo: [], guardHi: [] };  // Rolling window for baseline
+    let dropFrameCount = 0;  // Count consecutive frames showing drop pattern
 
     // ==================== UTILITY FUNCTIONS ====================
     
@@ -935,6 +937,8 @@
       lastHitTime = 0;
       totalHitsDetected = 0;
       bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+      bandHistory = { notch: [], guardLo: [], guardHi: [] };
+      dropFrameCount = 0;
       
       // Start detection loop
       rxInterval = setInterval(detectDrop, 120);
@@ -964,6 +968,17 @@
       const guardHiPower = computeBandPower(dataArray, binHz, guardHiLow, guardHiHigh);
       const guardAvg = (guardLoPower + guardHiPower) / 2;
       
+      // Update rolling history for baseline (keep ~5 seconds at 120ms intervals = ~42 frames)
+      const maxHistoryLength = 42;
+      bandHistory.notch.push(notchPower);
+      bandHistory.guardLo.push(guardLoPower);
+      bandHistory.guardHi.push(guardHiPower);
+      if (bandHistory.notch.length > maxHistoryLength) {
+        bandHistory.notch.shift();
+        bandHistory.guardLo.shift();
+        bandHistory.guardHi.shift();
+      }
+      
       // Update EMA floors
       const alpha = 0.05;
       if (notchPower <= bandFloors.notch + 3) {
@@ -983,21 +998,57 @@
       document.getElementById('guardPower').textContent = guardAvg.toFixed(1) + ' dB';
       document.getElementById('ratioPower').textContent = ratio.toFixed(1) + ' dB';
       
-      // Detection logic
+      // Detection logic - look for TEMPORARY notch dips, not static ratios
       const ratioThreshold = parseFloat(document.getElementById('ratioThreshold').value);
       const minInterHit = parseFloat(document.getElementById('minInterHit').value);
       const now = audioContext.currentTime;
       
-      if (ratio >= ratioThreshold && (now - lastHitTime) >= minInterHit) {
+      // Only check for drops once we have enough history
+      let dropDetected = false;
+      if (bandHistory.notch.length >= 20) {
+        // Compute median baseline for each band
+        const notchMedian = computeMedian([...bandHistory.notch]);
+        const guardLoMedian = computeMedian([...bandHistory.guardLo]);
+        const guardHiMedian = computeMedian([...bandHistory.guardHi]);
+        const guardAvgMedian = (guardLoMedian + guardHiMedian) / 2;
+        
+        // Check if this frame shows the drop pattern:
+        // 1. Notch is significantly BELOW its baseline
+        // 2. Guards are near their baseline (stable)
+        // 3. Ratio threshold is met
+        const notchDrop = notchMedian - notchPower;  // Positive = notch is lower
+        const guardLoStable = Math.abs(guardLoPower - guardLoMedian);
+        const guardHiStable = Math.abs(guardHiPower - guardHiMedian);
+        
+        const notchDropThreshold = 1.5;  // dB below baseline
+        const guardStableThreshold = 2.0;  // dB tolerance
+        
+        if (notchDrop >= notchDropThreshold && 
+            guardLoStable <= guardStableThreshold &&
+            guardHiStable <= guardStableThreshold &&
+            ratio >= ratioThreshold) {
+          dropFrameCount++;
+          
+          // Require pattern for 2-3 consecutive frames (~240-360ms) to match drop_len_ms
+          if (dropFrameCount >= 2 && (now - lastHitTime) >= minInterHit) {
+            dropDetected = true;
+          }
+        } else {
+          dropFrameCount = 0;
+        }
+      }
+      
+      if (dropDetected) {
         // Hit detected!
         hitTimestamps.push(now);
         lastHitTime = now;
         totalHitsDetected++;
+        dropFrameCount = 0;  // Reset after registering hit
         
         document.getElementById('lastHitTime').textContent = new Date().toLocaleTimeString();
         document.getElementById('totalHits').textContent = totalHitsDetected;
         
-        console.log('Drop detected! Ratio:', ratio.toFixed(2), 'dB');
+        console.log('Drop detected! Notch dip detected with stable guards. Ratio:', ratio.toFixed(2), 'dB');
       }
       
       // Clean old hits
@@ -1031,6 +1082,16 @@
       }
       
       return count > 0 ? sum / count : -120;
+    }
+    
+    function computeMedian(arr) {
+      if (arr.length === 0) return -120;
+      const sorted = arr.slice().sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      if (sorted.length % 2 === 0) {
+        return (sorted[mid - 1] + sorted[mid]) / 2;
+      }
+      return sorted[mid];
     }
 
     function stopRX() {
@@ -1066,6 +1127,8 @@
       totalHitsDetected = 0;
       presenceVerified = false;
       bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
+      bandHistory = { notch: [], guardLo: [], guardHi: [] };
+      dropFrameCount = 0;
       
       document.getElementById('rollingHits').textContent = '0';
       document.getElementById('lastHitTime').textContent = '—';
