@@ -1075,17 +1075,19 @@
         const guardLoStable = Math.abs(guardLoPower - guardLoMedian);
         const guardHiStable = Math.abs(guardHiPower - guardHiMedian);
         
-        const notchDropThreshold = 0.8;  // dB below baseline (relaxed from 1.5)
-        const guardStableThreshold = 3.5;  // dB tolerance (relaxed from 2.0)
+        const notchDropThreshold = 2.5;  // dB below baseline - stricter to avoid noise
+        const guardStableThreshold = 2.0;  // dB tolerance - stricter
+        const minAbsoluteRatio = 2.0;  // Minimum absolute ratio even with baseline check
         
         if (notchDrop >= notchDropThreshold && 
             guardLoStable <= guardStableThreshold &&
             guardHiStable <= guardStableThreshold &&
-            ratio >= ratioThreshold) {
+            ratio >= ratioThreshold &&
+            ratio >= minAbsoluteRatio) {  // Additional absolute threshold
           dropFrameCount++;
           
-          // Require pattern for 1-2 consecutive frames to match drop_len_ms (160ms)
-          if (dropFrameCount >= 1 && (now - lastHitTime) >= minInterHit) {
+          // Require pattern for 2-3 consecutive frames to reduce false positives
+          if (dropFrameCount >= 2 && (now - lastHitTime) >= minInterHit) {
             dropDetected = true;
           }
         } else {
