@@ -290,14 +290,15 @@
     <h1>🎵 Presence Beacon - Spectral Verification</h1>
 
     <div class="instructions">
-      <h2>How to Use</h2>
+      <h2>How to Use (Spectral Beacon 2)</h2>
       <ol>
-        <li><strong>⚠️ START RX FIRST (Important!)</strong> - On RX device, click "Start RX" to calibrate noise floor for 5 seconds</li>
-        <li><strong>Wait for Calibration</strong> - Watch for "✅ Calibrated - Ready" message before starting TX</li>
-        <li><strong>Then Start TX</strong> - On TX device, click "Start TX" to begin encoding signal</li>
-        <li><strong>Wait for Verification</strong> - RX will detect signal when correlation jumps above baseline + 5σ</li>
-        <li><strong>If Calibration Fails</strong> - You'll see "❌ CALIBRATION FAILED" if TX was running during calibration. Stop TX, click "Recalibrate" on RX, and try again.</li>
+        <li><strong>Start RX First</strong> - Click "Start RX" on listener device to calibrate noise floor (5 seconds)</li>
+        <li><strong>Wait for "✅ Calibrated"</strong> - Baseline noise measurement completes</li>
+        <li><strong>Start TX</strong> - Click "Start TX" on encoder device (sends burst every 8s)</li>
+        <li><strong>Wait for Detection</strong> - RX will show "✅ Presence Verified!" when correlation peak detected (Z≥5, PSR≥7dB)</li>
+        <li><strong>Normal Use</strong> - System works through music, talking, ambient noise. Claps/shouts are vetoed automatically.</li>
       </ol>
+      <p><strong>Expected:</strong> Verification in ≤10s at 20-40cm distance with iPhone mic.</p>
     </div>
     
     <div class="global-controls">
@@ -355,15 +356,15 @@
             </div>
             <div class="control-group">
               <label>Symbol Duration (ms):</label>
-              <input type="number" id="offlineSpectralDuration" value="70" min="40" max="120" step="5">
+              <input type="number" id="offlineSpectralDuration" value="60" min="40" max="120" step="5">
             </div>
             <div class="control-group">
               <label>Code Repeats:</label>
               <input type="number" id="offlineSpectralRepeats" value="2" min="1" max="5">
             </div>
             <div class="control-group">
-              <label>Symbol Gain (dB):</label>
-              <input type="number" id="offlineSpectralGain" value="2.0" min="0.5" max="3" step="0.1">
+              <label>Boost/Cut (±dB):</label>
+              <input type="number" id="offlineSpectralGain" value="1.5" min="0.5" max="3" step="0.1">
             </div>
             <div class="control-group">
               <label>Start Time (s):</label>
@@ -454,19 +455,23 @@
             </div>
             <div class="control-group">
               <label>Symbol Duration (ms):</label>
-              <input type="number" id="spectralSymbolDuration" value="70" min="40" max="120" step="5">
+              <input type="number" id="spectralSymbolDuration" value="60" min="40" max="120" step="5">
             </div>
             <div class="control-group">
               <label>Code Repeats:</label>
-              <input type="number" id="spectralRepeats" value="3" min="1" max="5">
+              <input type="number" id="spectralRepeats" value="2" min="1" max="5">
             </div>
             <div class="control-group">
-              <label>Symbol Gain (dB):</label>
-              <input type="number" id="spectralGain" value="12.0" min="2" max="20" step="1">
+              <label>Boost/Cut (±dB):</label>
+              <input type="number" id="spectralGain" value="1.5" min="0.5" max="3" step="0.1">
+            </div>
+            <div class="control-group">
+              <label>Burst Interval (s):</label>
+              <input type="number" id="spectralBurstInterval" value="8" min="2" max="15" step="1">
             </div>
           </div>
           <div class="readout">
-            💡 Beacon uses differential A/B encoding at high frequency for robust verification. Higher gain = stronger signal but more audible.
+            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. Use ±1.5dB for imperceptible encoding, or higher for testing/debugging.
           </div>
         </div>
 
@@ -586,8 +591,8 @@
                 <div class="value" id="corrZScore">—</div>
               </div>
               <div class="band-meter">
-                <div class="label">Consecutive Hits</div>
-                <div class="value" id="consecutiveHits">0/3</div>
+                <div class="label">PSR (dB)</div>
+                <div class="value" id="corrPSR">—</div>
               </div>
               <div class="band-meter">
                 <div class="label">Loudness</div>
@@ -728,9 +733,11 @@
 
     // Spectral Beacon RX State
     let spectralSymbolBuffer = [];  // Buffered delta values
-    let spectralCorrelationHistory = [];  // For Z-score calculation
+    let spectralCorrelationHistory = [];  // For Z-score calculation and sidelobe calculation
     let spectralConsecutiveHits = 0; // Track consecutive good correlations
-    let consecutiveRequired = 3; // Required consecutive detections for verification
+    let consecutiveRequired = 1; // Only need 1 strong detection (with PSR check)
+    let spectralLastVerifyTime = 0; // For 8s cooldown
+    let spectralBroadbandEMA = -60; // EMA for broadband noise veto
     
     // Adaptive baseline calibration
     let baselineCalibrated = false;
@@ -948,17 +955,17 @@
       const freqB = centerFreq + binSpacing / 2;
       
       // Create two narrow peaking filters for bins A and B
-      // Q=30 gives ~400Hz bandwidth at 12kHz - narrow enough to separate, wide enough for energy
+      // Q=50 gives ~240Hz bandwidth at 12kHz - optimal balance
       const filterA = audioContext.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 30;
+      filterA.Q.value = 50;
       filterA.gain.value = 0;
       
       const filterB = audioContext.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 30;
+      filterB.Q.value = 50;
       filterB.gain.value = 0;
       
       spectralFilters = { binA: filterA, binB: filterB };
@@ -997,10 +1004,10 @@
       
       console.log('✅ SPECTRAL BEACON TX INITIALIZED');
       console.log(`  ├─ Frequency A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
-      console.log(`  ├─ Symbol gain: ±${symbolGain}dB, Q: 30 (BW ~${(freqA/30).toFixed(0)}Hz)`);
+      console.log(`  ├─ Symbol gain: ±${symbolGain}dB, Q: 50 (BW ~${(freqA/50).toFixed(0)}Hz)`);
       console.log(`  ├─ Output gain: ${outputGainDb}dB (master volume: ${masterGain.gain.value.toFixed(3)})`);
-      console.log(`  └─ Code length: ${PN31_CODE.length} symbols`);
-      console.log(`  └─ LISTEN for encoding: should hear subtle high-frequency modulation`);
+      console.log(`  ├─ Code length: ${PN31_CODE.length} symbols × ${parseInt(document.getElementById('spectralRepeats').value)} repeats`);
+      console.log(`  └─ Burst every ${parseFloat(document.getElementById('spectralBurstInterval').value)}s`);
       
       document.getElementById('txStatus').textContent = 'Transmitting Spectral Beacon';
       
@@ -1014,9 +1021,11 @@
       const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
       const symbolGain = parseFloat(document.getElementById('spectralGain').value);
       const repeats = parseInt(document.getElementById('spectralRepeats').value);
+      const burstIntervalS = parseFloat(document.getElementById('spectralBurstInterval').value);
       
       const symbolDurationS = symbolDurationMs / 1000;
-      const fadeTime = Math.min(0.005, symbolDurationS * 0.1); // 5ms or 10% of symbol, whichever is shorter
+      const fadeTime = 0.004; // 4ms fade
+      const jitterMs = 12; // ±12ms jitter
       
       let symbolIndex = 0;
       const totalSymbols = PN31_CODE.length * repeats;
@@ -1038,8 +1047,7 @@
           console.log(`📡 TX @ symbol ${symbolIndex}: code[${codeIndex}]=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB, Δ=${(gainB - gainA).toFixed(1)}dB`);
         }
         
-        // CRITICAL: Crossfade between states, DON'T fade to zero!
-        // Maintain constant energy by fading from one state to the next
+        // Smooth crossfade with automation
         spectralFilters.binA.gain.cancelScheduledValues(now);
         spectralFilters.binB.gain.cancelScheduledValues(now);
         
@@ -1049,20 +1057,23 @@
         spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
         spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
         
-        if (symbolIndex % PN31_CODE.length === 0) {
+        if (symbolIndex % PN31_CODE.length === 0 && symbolIndex > 0) {
           console.log(`🎯 TX: Starting sequence repeat ${Math.floor(symbolIndex / PN31_CODE.length) + 1}/${repeats}`);
         }
         
         symbolIndex++;
         
         if (symbolIndex < totalSymbols) {
-          spectralTransmitTimer = setTimeout(transmitNextSymbol, symbolDurationMs);
+          // Add jitter to symbol timing
+          const jitter = (Math.random() * 2 - 1) * jitterMs;
+          spectralTransmitTimer = setTimeout(transmitNextSymbol, symbolDurationMs + jitter);
         } else {
-          // Restart after brief pause
+          // Burst complete - wait for burstInterval seconds
+          console.log(`✅ TX: Burst complete, next burst in ${burstIntervalS}s`);
           spectralTransmitTimer = setTimeout(() => {
             symbolIndex = 0;
             transmitNextSymbol();
-          }, 300); // 300ms pause between sequences
+          }, burstIntervalS * 1000);
         }
         
         totalDropsScheduled = Math.floor(symbolIndex / PN31_CODE.length);
@@ -1383,8 +1394,8 @@
       hpf.frequency.value = 200;
       
       analyser = audioContext.createAnalyser();
-      analyser.fftSize = 8192; // Higher FFT for better frequency resolution
-      analyser.smoothingTimeConstant = 0.2; // Faster response to 70ms symbols
+      analyser.fftSize = 2048; // 2048 @ 48kHz = ~43Hz bins, ~21ms hop
+      analyser.smoothingTimeConstant = 0.3; // Moderate smoothing
       
       micSource.connect(hpf);
       hpf.connect(analyser);
@@ -1392,8 +1403,9 @@
       // Reset state
       spectralSymbolBuffer = [];
       spectralCorrelationHistory = [];
-      spectralConsecutiveHits = 0; // Track consecutive good correlations
+      spectralConsecutiveHits = 0;
       presenceVerified = false;
+      spectralBroadbandEMA = -60;
       
       // Reset baseline calibration
       baselineCalibrated = false;
@@ -1430,36 +1442,34 @@
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
       
-      // Extract power at bins A and B - NARROW bandwidth to match TX Q
-      // TX uses Q=8 peaking filters, so we need narrow measurement (10-20Hz)
-      const bandwidth = 20; // Hz, narrow to detect the peak differential
-      const powerA = computeBandPower(dataArray, binHz, freqA - bandwidth/2, freqA + bandwidth/2);
-      const powerB = computeBandPower(dataArray, binHz, freqB - bandwidth/2, freqB + bandwidth/2);
+      // Extract power at bins A and B - measure ±1 bin around each center
+      const powerA = computeBandPower(dataArray, binHz, freqA - binHz, freqA + binHz);
+      const powerB = computeBandPower(dataArray, binHz, freqB - binHz, freqB + binHz);
       
       // Compute differential (in dB)
       const delta = powerB - powerA;
       
-      // Compute broadband RMS for loudness veto
+      // Compute broadband RMS for loudness veto (1-15kHz)
       const broadbandPower = computeBandPower(dataArray, binHz, 1000, 15000);
       
-      // Loudness veto: if extremely loud (>-20dB) and delta saturates, skip
-      const loudnessVeto = (broadbandPower > -20 && Math.abs(delta) > 10);
+      // Update broadband EMA (200ms time constant at 60ms symbol rate)
+      const alpha = 0.3; // ~200ms EMA
+      spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
+      
+      // Loudness veto: if broadband jumps >12dB above EMA (clap/shout)
+      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 12);
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
       
-      // Detailed logging every 10 frames
+      // Detailed logging every 20 frames (~1.2s at 60ms symbols)
       const frameCount = spectralSymbolBuffer.length;
-      if (frameCount % 10 === 0) {
+      if (frameCount % 20 === 0 && frameCount > 0) {
         console.log(`🎯 SPECTRAL RX @ frame ${frameCount}:`);
-        console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz, BW: 20Hz`);
+        console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz`);
         console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB, Δ: ${delta.toFixed(2)}dB`);
-        console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, Veto: ${loudnessVeto}`);
+        console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, EMA: ${spectralBroadbandEMA.toFixed(2)}dB, Veto: ${loudnessVeto}`);
         console.log(`  └─ Buffer size: ${spectralSymbolBuffer.length}/${PN31_CODE.length}`);
-        
-        if (Math.abs(delta) < 0.5) {
-          console.warn(`⚠️ RX ISSUE: Delta too small (${delta.toFixed(2)}dB). TX may not be running or gain too low!`);
-        }
       }
       
       if (!loudnessVeto) {
@@ -1474,19 +1484,31 @@
         
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
-          // Phase scan (0..2) and polarity check
-          const phaseMax = 2;
+          // Phase scan and polarity check
+          const phaseMax = 3; // Check 4 phase offsets
           let best = { corr: -1, phase: 0, sign: 1 };
+          let allCorrelations = []; // For PSR calculation
+          
           for (let p = 0; p <= phaseMax; p++) {
             const start = spectralSymbolBuffer.length - codeLen - p;
-            const seg = spectralSymbolBuffer.slice(start, start + codeLen);
-            const corrPos = computeCorrelation(seg, PN31_CODE);
-            const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
-            const corr = Math.max(corrPos, corrNeg);
-            const sign = corrNeg > corrPos ? -1 : 1;
-            if (corr > best.corr) best = { corr, phase: p, sign };
+            if (start >= 0) {
+              const seg = spectralSymbolBuffer.slice(start, start + codeLen);
+              const corrPos = computeCorrelation(seg, PN31_CODE);
+              const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
+              const corr = Math.max(corrPos, corrNeg);
+              const sign = corrNeg > corrPos ? -1 : 1;
+              allCorrelations.push(corr);
+              if (corr > best.corr) best = { corr, phase: p, sign };
+            }
           }
           const correlation = best.corr;
+          
+          // Compute Peak-to-Sidelobe Ratio (PSR)
+          // Sidelobe = mean of all non-peak correlations
+          const sidelobes = allCorrelations.filter((c, i) => i !== best.phase);
+          const sidelobeMean = sidelobes.length > 0 ? sidelobes.reduce((a,b) => a+b, 0) / sidelobes.length : 0;
+          const peakToSidelobeRatio = correlation > 0 && sidelobeMean > 0 ? 
+            20 * Math.log10(correlation / Math.max(sidelobeMean, 0.001)) : 0;
           
       // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
           if (!baselineCalibrated) {
@@ -1543,81 +1565,74 @@
               document.getElementById('baselineStatus').textContent = `Calibrating... ${baselineCalibrationSamples.length}/70`;
             }
             
-            // Update display during calibration
-            document.getElementById('corrPeak').textContent = `${correlation.toFixed(3)} (cal)`;
-            document.getElementById('corrZScore').textContent = `${baselineCalibrationSamples.length}/70`;
-            document.getElementById('consecutiveHits').textContent = 'calibrating...';
-            return; // Don't detect during calibration
+          // Update UI during calibration
+          document.getElementById('corrPeak').textContent = `${correlation.toFixed(3)} (cal)`;
+          document.getElementById('corrZScore').textContent = `${baselineCalibrationSamples.length}/70`;
+          document.getElementById('corrPSR').textContent = '—';
+          return; // Don't detect during calibration
           }
           
           // NORMAL DETECTION (after calibration)
-          // Update correlation history for Z-score
-          spectralCorrelationHistory.push(correlation);
-          if (spectralCorrelationHistory.length > 100) {
-            spectralCorrelationHistory.shift();
-          }
-          
-          // Compute Z-score (PSR-like)
-          const mean = spectralCorrelationHistory.reduce((a,b) => a+b, 0) / spectralCorrelationHistory.length;
-          const variance = spectralCorrelationHistory.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / spectralCorrelationHistory.length;
-          const stdDev = Math.sqrt(variance);
-          const zScore = stdDev > 0.001 ? (correlation - mean) / stdDev : 0;
+          // Compute Z-score using baseline stats
+          const zScore = baselineCorrelationStdDev > 1e-6 ? 
+            (correlation - baselineCorrelationMean) / baselineCorrelationStdDev : 0;
           
           // Update display
           document.getElementById('corrPeak').textContent = correlation.toFixed(3);
           document.getElementById('corrZScore').textContent = zScore.toFixed(2);
-          document.getElementById('consecutiveHits').textContent = `${spectralConsecutiveHits}/${consecutiveRequired}`;
+          document.getElementById('corrPSR').textContent = peakToSidelobeRatio.toFixed(1);
           
-          // Log correlation at first full window and periodically every ~codeLen frames
-          if (spectralSymbolBuffer.length === codeLen || frameCount % codeLen === 0) {
+          // Log correlation periodically
+          if (frameCount % 30 === 0 && frameCount > 0) {
             console.log(`📊 CORRELATION COMPUTED:`);
-            console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
-            console.log(`  ├─ Baseline: mean=${baselineCorrelationMean.toFixed(3)}, σ=${baselineCorrelationStdDev.toFixed(3)}`);
-            console.log(`  ├─ Current: mean=${mean.toFixed(3)}, σ=${stdDev.toFixed(3)}, z-score=${zScore.toFixed(2)}`);
-            console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
-            console.log(`  └─ Adaptive threshold: corr > ${Math.max(baselineCorrelationMean + 5 * baselineCorrelationStdDev, 0.35).toFixed(3)} (5σ or 0.35 floor)`);
+            console.log(`  ├─ Peak: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
+            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (baseline: μ=${baselineCorrelationMean.toFixed(3)}, σ=${baselineCorrelationStdDev.toFixed(3)})`);
+            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB`);
+            console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
           }
           
-          // ADAPTIVE DETECTION THRESHOLDS
-          // Degenerate baseline guard handled by stddev floor; continue with fallback threshold
+          // DETECTION CRITERIA
+          const now = audioContext.currentTime;
+          const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          const adaptiveThreshold = Math.max(baselineCorrelationMean + 5 * baselineCorrelationStdDev, 0.35); // 5σ above noise with 0.35 floor
-          const zScoreMin = 3.0;       // Strong z-score requirement
-          const minStdDev = baselineCorrelationStdDev * 1.5; // At least 1.5x baseline variation
+          const zScoreThreshold = 5.0;  // Z ≥ 5
+          const psrThreshold = 7.0;     // PSR ≥ 7 dB
           
-          // Check all conditions
-          const passedCorr = correlation > adaptiveThreshold;
-          const passedZScore = zScore > zScoreMin;
-          const passedStdDev = stdDev > minStdDev;
-          const singleFramePassed = passedCorr && passedZScore && passedStdDev;
+          const passedZScore = zScore >= zScoreThreshold;
+          const passedPSR = peakToSidelobeRatio >= psrThreshold;
+          const detectionMade = passedZScore && passedPSR && !cooldownActive;
           
-          // Consecutive hit tracking
-          if (singleFramePassed) {
-            spectralConsecutiveHits++;
-          } else {
-            spectralConsecutiveHits = 0; // Reset on any miss
+          // Log significant detections
+          if (zScore > 3.0) {
+            console.log(`🔍 CANDIDATE DETECTION:`);
+            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (≥${zScoreThreshold})`);
+            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
+            console.log(`  ├─ Cooldown: ${cooldownActive ? '⏳ active' : '✅ clear'}`);
+            console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
           
-          // Log detection result
-          if (correlation > baselineCorrelationMean + 2 * baselineCorrelationStdDev) {  // Log anything 2σ above noise
-            if (!singleFramePassed) {
-              console.log(`⚠️ WEAK SIGNAL DETECTED (not passing all thresholds):`);
-              console.log(`  ├─ Correlation: ${correlation.toFixed(3)} ${passedCorr ? '✓' : '✗'} (need > ${adaptiveThreshold.toFixed(3)})`);
-              console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✓' : '✗'} (need > ${zScoreMin})`);
-              console.log(`  ├─ StdDev: ${stdDev.toFixed(3)} ${passedStdDev ? '✓' : '✗'} (need > ${minStdDev.toFixed(3)})`);
-              console.log(`  └─ Consecutive hits: ${spectralConsecutiveHits}/${consecutiveRequired}`);
-            } else {
-              console.log(`✅ STRONG SIGNAL! Consecutive: ${spectralConsecutiveHits}/${consecutiveRequired}`);
-            }
-          }
-          
-          // Require consecutive detections
-          if (spectralConsecutiveHits >= consecutiveRequired && !presenceVerified) {
+          // Verify presence on strong detection
+          if (detectionMade && !presenceVerified) {
             presenceVerified = true;
+            spectralLastVerifyTime = now;
+            
             const badge = document.getElementById('presenceBadge');
             badge.textContent = '✅ Presence Verified!';
             badge.classList.add('verified');
-            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}, StdDev: ${stdDev.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}, hits=${spectralConsecutiveHits}`);
+            
+            console.log(`🎉 PRESENCE VERIFIED!`);
+            console.log(`  ├─ Correlation: ${correlation.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
+            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (threshold: ${zScoreThreshold})`);
+            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB (threshold: ${psrThreshold} dB)`);
+            console.log(`  └─ 8s cooldown activated`);
+            
+            // Reset after cooldown
+            setTimeout(() => {
+              presenceVerified = false;
+              badge.textContent = '⏳ Listening...';
+              badge.classList.remove('verified');
+              console.log('🔄 Cooldown complete - ready for next detection');
+            }, 8000);
           }
         }
       } else {
@@ -1916,7 +1931,7 @@
       document.getElementById('detectionThreshold').textContent = '—';
       document.getElementById('corrPeak').textContent = '—';
       document.getElementById('corrZScore').textContent = '—';
-      document.getElementById('consecutiveHits').textContent = '0/3';
+      document.getElementById('corrPSR').textContent = '—';
       
       document.getElementById('startRxBtn').disabled = false;
       document.getElementById('stopRxBtn').disabled = true;
@@ -2022,13 +2037,13 @@
       const filterA = offlineCtx.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 20; // Broader for real-world playback
+      filterA.Q.value = 50; // Match live encoder Q
       filterA.gain.value = 0;
       
       const filterB = offlineCtx.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 20; // Broader for real-world playback
+      filterB.Q.value = 50; // Match live encoder Q
       filterB.gain.value = 0;
       
       source.connect(filterA);
@@ -2036,12 +2051,14 @@
       filterB.connect(offlineCtx.destination);
       
       // Schedule symbols
-      const fadeTime = 0.01;
+      const fadeTime = 0.004; // 4ms fade to match live
+      const jitterMs = 12; // ±12ms jitter
       let symbolsEncoded = 0;
       
       for (let repeat = 0; repeat < repeats; repeat++) {
         for (let i = 0; i < PN31_CODE.length; i++) {
-          const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS;
+          const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
+          const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS + jitter;
           
           if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
             const symbol = PN31_CODE[i];
