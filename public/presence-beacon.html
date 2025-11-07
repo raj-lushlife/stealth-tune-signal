@@ -737,7 +737,7 @@
     let spectralConsecutiveHits = 0; // Track consecutive good correlations
     let consecutiveRequired = 1; // Only need 1 strong detection (with PSR check)
     let spectralLastVerifyTime = 0; // For 8s cooldown
-    let spectralBroadbandEMA = -60; // EMA for broadband noise veto
+    let spectralBroadbandEMA = -100; // EMA for broadband noise veto (start low, converges up)
     
     // Adaptive baseline calibration
     let baselineCalibrated = false;
@@ -1405,7 +1405,7 @@
       spectralCorrelationHistory = [];
       spectralConsecutiveHits = 0;
       presenceVerified = false;
-      spectralBroadbandEMA = -60;
+      spectralBroadbandEMA = -100;
       
       // Reset baseline calibration
       baselineCalibrated = false;
@@ -1456,8 +1456,8 @@
       const alpha = 0.3; // ~200ms EMA
       spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
       
-      // Loudness veto: if broadband jumps >12dB above EMA (clap/shout)
-      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 12);
+      // Loudness veto: if broadband jumps >18dB above EMA (clap/shout)
+      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 18);
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
