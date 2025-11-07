@@ -401,7 +401,7 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="offlineSpectralGain" value="1.5" min="0.5" max="3" step="0.1">
+              <input type="number" id="offlineSpectralGain" value="6.5" min="0.5" max="10" step="0.1">
             </div>
             <div class="control-group">
               <label>Start Time (s):</label>
@@ -500,7 +500,7 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="spectralGain" value="1.5" min="0.5" max="3" step="0.1">
+              <input type="number" id="spectralGain" value="6.5" min="0.5" max="10" step="0.1">
             </div>
             <div class="control-group">
               <label>Burst Interval (s):</label>
@@ -508,7 +508,7 @@
             </div>
           </div>
           <div class="readout">
-            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. Use ±1.5dB for imperceptible encoding, or higher for testing/debugging.
+            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. Default ±6.5dB balances detectability and subtlety; lower for imperceptible encoding.
           </div>
         </div>
 
@@ -1765,11 +1765,11 @@
             return;
           }
           
-          // FSM thresholds (strict, all must pass ANDed)
-          const CORR_THRESHOLD = 0.45;
-          const PSR_THRESHOLD = 10.0;
-          const Z_THRESHOLD = 3.5;
-          const MEDIAN_DELTA_THRESHOLD = 1.2; // dB
+          // FSM thresholds (calibrated for real-world conditions)
+          const CORR_THRESHOLD = 0.40;
+          const PSR_THRESHOLD = 7.5;
+          const Z_THRESHOLD = 2.5;
+          const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
           const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
           const GUARD_THRESHOLD = 3.5; // dB
           const CADENCE_WINDOW_MS = 60; // ±60ms for T=300ms
