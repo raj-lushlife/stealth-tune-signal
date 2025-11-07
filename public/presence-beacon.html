@@ -721,6 +721,7 @@
     // Spectral Beacon RX State
     let spectralSymbolBuffer = [];  // Buffered delta values
     let spectralCorrelationHistory = [];  // For Z-score calculation
+    let spectralConsecutiveHits = 0; // Track consecutive good correlations
 
     // PN-31 Gold Code for spectral beacon (±1 sequence)
     const PN31_CODE = [1,-1,1,1,-1,1,-1,-1,1,1,1,-1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,1,1,1];
@@ -1346,11 +1347,12 @@
       // Reset state
       spectralSymbolBuffer = [];
       spectralCorrelationHistory = [];
+      spectralConsecutiveHits = 0; // Track consecutive good correlations
       presenceVerified = false;
       
       console.log('✅ SPECTRAL BEACON RX INITIALIZED');
       console.log(`  ├─ FFT size: ${analyser.fftSize}`);
-      console.log(`  └─ Detection: correlation > 0.25, Z-score > 1.5 (VERY LOOSE FOR TESTING)`);
+      console.log(`  └─ Detection: corr > 0.35, z-score > 2.0, 3 consecutive hits (noise rejection)`);
       
       // Start detection loop
       const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
@@ -1449,36 +1451,48 @@
             console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
             console.log(`  ├─ Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
             console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
-            console.log(`  └─ Thresholds: corr > 0.25, z-score > 1.5, stdDev > 0.05 (VERY LOOSE)`);
+            console.log(`  └─ Thresholds: corr > 0.35, z > 2.0, stdDev > 0.08, 3 consecutive`);
           }
           
-          // Detection thresholds (loosened for initial testing)
-          const corrThreshold = 0.25;  // Very lenient
-          const zScoreMin = 1.5;       // Very lenient
-          const minStdDev = 0.05;      // Very lenient
+          // Detection thresholds (balanced for real signal vs noise)
+          const corrThreshold = 0.35;  // Higher than noise floor
+          const zScoreMin = 2.0;       // Require statistical significance
+          const minStdDev = 0.08;      // Meaningful variation
+          const consecutiveRequired = 3; // Must detect 3 times in a row
           
           // Check all conditions
           const passedCorr = correlation > corrThreshold;
           const passedZScore = zScore > zScoreMin;
           const passedStdDev = stdDev > minStdDev;
-          const allPassed = passedCorr && passedZScore && passedStdDev;
+          const singleFramePassed = passedCorr && passedZScore && passedStdDev;
+          
+          // Consecutive hit tracking
+          if (singleFramePassed) {
+            spectralConsecutiveHits++;
+          } else {
+            spectralConsecutiveHits = 0; // Reset on any miss
+          }
           
           // Log detection result
-          if (correlation > 0.25) {  // Log near-misses for debugging
-            if (!allPassed) {
+          if (correlation > 0.20) {  // Log near-misses for debugging
+            if (!singleFramePassed) {
               console.log(`❌ DETECTION FAILED:`);
               console.log(`  ├─ Correlation: ${correlation.toFixed(3)} ${passedCorr ? '✓' : '✗'} (need > ${corrThreshold})`);
               console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✓' : '✗'} (need > ${zScoreMin})`);
-              console.log(`  └─ StdDev: ${stdDev.toFixed(3)} ${passedStdDev ? '✓' : '✗'} (need > ${minStdDev})`);
+              console.log(`  ├─ StdDev: ${stdDev.toFixed(3)} ${passedStdDev ? '✓' : '✗'} (need > ${minStdDev})`);
+              console.log(`  └─ Consecutive hits: ${spectralConsecutiveHits}/${consecutiveRequired}`);
+            } else {
+              console.log(`✅ SINGLE FRAME PASSED! Consecutive: ${spectralConsecutiveHits}/${consecutiveRequired}`);
             }
           }
           
-          if (allPassed && !presenceVerified) {
+          // Require consecutive detections
+          if (spectralConsecutiveHits >= consecutiveRequired && !presenceVerified) {
             presenceVerified = true;
             const badge = document.getElementById('presenceBadge');
             badge.textContent = '✅ Presence Verified!';
             badge.classList.add('verified');
-            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}, StdDev: ${stdDev.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
+            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}, StdDev: ${stdDev.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}, hits=${spectralConsecutiveHits}`);
           }
         }
       } else {
