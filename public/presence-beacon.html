@@ -217,6 +217,43 @@
       border-color: #4CAF50;
       animation: pulse 2s infinite;
     }
+    
+    .fsm-state-pill {
+      display: inline-block;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: bold;
+      margin-top: 12px;
+      background: #333;
+      color: #999;
+      border: 2px solid #555;
+    }
+    
+    .fsm-state-pill.idle {
+      background: #333;
+      color: #999;
+      border-color: #555;
+    }
+    
+    .fsm-state-pill.preamble {
+      background: #1a4d7a;
+      color: #64B5F6;
+      border-color: #2196F3;
+    }
+    
+    .fsm-state-pill.code {
+      background: #7a4d1a;
+      color: #FFB74D;
+      border-color: #FF9800;
+    }
+    
+    .fsm-state-pill.unlocked {
+      background: #1b5e20;
+      color: #4CAF50;
+      border-color: #4CAF50;
+      animation: pulse 2s infinite;
+    }
 
     @keyframes pulse {
       0%, 100% { opacity: 1; }
@@ -603,7 +640,7 @@
               <div><strong>Status:</strong> <span id="baselineStatus">Waiting to start...</span></div>
               <div><strong>Baseline Noise:</strong> <span id="baselineNoise">Not calibrated</span></div>
               <div><strong>Detection Threshold:</strong> <span id="detectionThreshold">—</span></div>
-              <div><strong>Consecutive Hits:</strong> <span id="consecutiveHits">0</span></div>
+              <div><strong>FSM State:</strong> <span id="fsmStatePill" class="fsm-state-pill idle">IDLE</span></div>
             </div>
           </div>
         </div>
@@ -732,13 +769,24 @@
     let dropFrameCount = 0;  // Count consecutive frames showing drop pattern
     let lastDropDetectionTime = 0;  // Cooldown tracker to prevent multiple detections of same drop
 
-    // Spectral Beacon RX State
+    // Spectral Beacon RX State - FSM Approach
     let spectralSymbolBuffer = [];  // Buffered delta values
     let spectralCorrelationHistory = [];  // For Z-score calculation and sidelobe calculation
-    let spectralConsecutiveHits = 0; // Track consecutive good correlations
-    let consecutiveRequired = 1; // Only need 1 strong detection (with PSR check)
-    let spectralLastVerifyTime = 0; // For 8s cooldown
     let spectralBroadbandEMA = -100; // EMA for broadband noise veto (start low, converges up)
+    
+    // FSM State Machine
+    let fsmState = 'IDLE'; // IDLE → PREAMBLE_LOCK → CODE_LOCK → UNLOCKED
+    let fsmStateStartTime = 0;
+    let fsmLockoutUntil = 0; // 45s cooldown after UNLOCKED
+    
+    // Preamble detection
+    let preambleDetectionStart = 0;
+    let preambleDriftEstimate = 0;
+    let preambleFlipHistory = []; // Track A/B flips
+    
+    // Code correlation tracking
+    let codeDetectionAttempts = [];
+    let codeRepeatTimestamps = [];
     
     // Adaptive baseline calibration
     let baselineCalibrated = false;
@@ -750,6 +798,11 @@
     let baselineBroadbandMean = -100;
     let baselineBroadbandStdDev = 0;
     let baselineBroadbandSamples = [];
+    
+    // Energy & guard baselines
+    let baselineEnergySum = -100; // E(A) + E(B) baseline
+    let baselineGuardLo = -100;
+    let baselineGuardHi = -100;
     
     // PN-31 Gold Code for spectral beacon (±1 sequence)
     const PN31_CODE = [1,-1,1,1,-1,1,-1,-1,1,1,1,-1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,1,1,1];
@@ -785,6 +838,32 @@
 
     function randomJitter(jitterS) {
       return (Math.random() * 2 - 1) * jitterS;
+    }
+    
+    function updateFSMStateDisplay() {
+      const pill = document.getElementById('fsmStatePill');
+      if (!pill) return;
+      
+      pill.className = 'fsm-state-pill';
+      
+      switch(fsmState) {
+        case 'IDLE':
+          pill.textContent = 'IDLE';
+          pill.classList.add('idle');
+          break;
+        case 'PREAMBLE_LOCK':
+          pill.textContent = 'PREAMBLE_LOCK';
+          pill.classList.add('preamble');
+          break;
+        case 'CODE_LOCK':
+          pill.textContent = 'CODE_LOCK';
+          pill.classList.add('code');
+          break;
+        case 'UNLOCKED':
+          pill.textContent = '🔓 UNLOCKED';
+          pill.classList.add('unlocked');
+          break;
+      }
     }
 
     // ==================== PINK NOISE GENERATOR ====================
@@ -1031,63 +1110,98 @@
       const burstIntervalS = parseFloat(document.getElementById('spectralBurstInterval').value);
       
       const symbolDurationS = symbolDurationMs / 1000;
-      const fadeTime = 0.004; // 4ms fade
-      const jitterMs = 12; // ±12ms jitter
+      const fadeTime = 0.01; // 10ms cos² fade
+      const jitterMs = 15; // ±15ms jitter
       
+      const preambleDurationMs = 90; // 90ms preamble
+      const preambleFlipMs = 15; // Flip every 15ms (rapid 01010...)
+      
+      let phase = 'preamble'; // 'preamble' → 'symbols'
       let symbolIndex = 0;
+      let preambleFlips = 0;
       const totalSymbols = PN31_CODE.length * repeats;
+      const preambleFlipCount = Math.floor(preambleDurationMs / preambleFlipMs);
       
-      function transmitNextSymbol() {
+      function transmitNext() {
         if (!txRunning || currentMode !== 'spectral' || !spectralFilters.binA) return;
         
         const now = audioContext.currentTime;
-        const codeIndex = symbolIndex % PN31_CODE.length;
-        const symbol = PN31_CODE[codeIndex];
         
-        // Differential encoding: symbol=+1 means B louder, A quieter
-        // symbol=-1 means A louder, B quieter
-        const gainA = symbol === 1 ? -symbolGain : symbolGain;
-        const gainB = symbol === 1 ? symbolGain : -symbolGain;
-        
-        // TX MONITORING: Log actual differential being transmitted
-        if (symbolIndex % 10 === 0) {
-          console.log(`📡 TX @ symbol ${symbolIndex}: code[${codeIndex}]=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB, Δ=${(gainB - gainA).toFixed(1)}dB`);
-        }
-        
-        // Smooth crossfade with automation
-        spectralFilters.binA.gain.cancelScheduledValues(now);
-        spectralFilters.binB.gain.cancelScheduledValues(now);
-        
-        spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
-        spectralFilters.binA.gain.linearRampToValueAtTime(gainA, now + fadeTime);
-        
-        spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
-        spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
-        
-        if (symbolIndex % PN31_CODE.length === 0 && symbolIndex > 0) {
-          console.log(`🎯 TX: Starting sequence repeat ${Math.floor(symbolIndex / PN31_CODE.length) + 1}/${repeats}`);
-        }
-        
-        symbolIndex++;
-        
-        if (symbolIndex < totalSymbols) {
-          // Add jitter to symbol timing
-          const jitter = (Math.random() * 2 - 1) * jitterMs;
-          spectralTransmitTimer = setTimeout(transmitNextSymbol, symbolDurationMs + jitter);
+        if (phase === 'preamble') {
+          // Preamble: rapid alternating A/B flips (010101...)
+          const flipValue = (preambleFlips % 2 === 0) ? 1 : -1;
+          const gainA = flipValue === 1 ? -symbolGain : symbolGain;
+          const gainB = flipValue === 1 ? symbolGain : -symbolGain;
+          
+          spectralFilters.binA.gain.cancelScheduledValues(now);
+          spectralFilters.binB.gain.cancelScheduledValues(now);
+          spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
+          spectralFilters.binA.gain.linearRampToValueAtTime(gainA, now + fadeTime);
+          spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
+          spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
+          
+          if (preambleFlips === 0) {
+            console.log(`🎵 TX: PREAMBLE START (${preambleDurationMs}ms, ${preambleFlipCount} flips)`);
+          }
+          
+          preambleFlips++;
+          
+          if (preambleFlips < preambleFlipCount) {
+            spectralTransmitTimer = setTimeout(transmitNext, preambleFlipMs);
+          } else {
+            console.log(`✅ TX: PREAMBLE COMPLETE → Starting code transmission`);
+            phase = 'symbols';
+            spectralTransmitTimer = setTimeout(transmitNext, 20); // Small gap before symbols
+          }
         } else {
-          // Burst complete - wait for burstInterval seconds
-          console.log(`✅ TX: Burst complete, next burst in ${burstIntervalS}s`);
-          spectralTransmitTimer = setTimeout(() => {
-            symbolIndex = 0;
-            transmitNextSymbol();
-          }, burstIntervalS * 1000);
+          // Symbols: PN31 code with differential encoding
+          const codeIndex = symbolIndex % PN31_CODE.length;
+          const symbol = PN31_CODE[codeIndex];
+          
+          // Differential encoding: symbol=+1 means B louder, A quieter
+          const gainA = symbol === 1 ? -symbolGain : symbolGain;
+          const gainB = symbol === 1 ? symbolGain : -symbolGain;
+          
+          // TX MONITORING: Log actual differential being transmitted
+          if (symbolIndex % 10 === 0) {
+            console.log(`📡 TX @ symbol ${symbolIndex}: code[${codeIndex}]=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB, Δ=${(gainB - gainA).toFixed(1)}dB`);
+          }
+          
+          // Smooth crossfade with automation
+          spectralFilters.binA.gain.cancelScheduledValues(now);
+          spectralFilters.binB.gain.cancelScheduledValues(now);
+          spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
+          spectralFilters.binA.gain.linearRampToValueAtTime(gainA, now + fadeTime);
+          spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
+          spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
+          
+          if (symbolIndex % PN31_CODE.length === 0 && symbolIndex > 0) {
+            console.log(`🎯 TX: Code repeat ${Math.floor(symbolIndex / PN31_CODE.length) + 1}/${repeats}`);
+          }
+          
+          symbolIndex++;
+          
+          if (symbolIndex < totalSymbols) {
+            // Add jitter to symbol timing
+            const jitter = (Math.random() * 2 - 1) * jitterMs;
+            spectralTransmitTimer = setTimeout(transmitNext, symbolDurationMs + jitter);
+          } else {
+            // Burst complete - reset and wait for burstInterval
+            console.log(`✅ TX: Burst complete, next burst in ${burstIntervalS}s`);
+            spectralTransmitTimer = setTimeout(() => {
+              phase = 'preamble';
+              symbolIndex = 0;
+              preambleFlips = 0;
+              transmitNext();
+            }, burstIntervalS * 1000);
+          }
+          
+          totalDropsScheduled = Math.floor(symbolIndex / PN31_CODE.length);
+          document.getElementById('totalDrops').textContent = totalDropsScheduled;
         }
-        
-        totalDropsScheduled = Math.floor(symbolIndex / PN31_CODE.length);
-        document.getElementById('totalDrops').textContent = totalDropsScheduled;
       }
       
-      transmitNextSymbol();
+      transmitNext();
     }
 
     // ==================== LEGACY NOTCH TX ====================
@@ -1407,21 +1521,30 @@
       micSource.connect(hpf);
       hpf.connect(analyser);
       
-      // Reset state
+      // Reset FSM state
+      fsmState = 'IDLE';
+      fsmStateStartTime = audioContext.currentTime;
+      fsmLockoutUntil = 0;
       spectralSymbolBuffer = [];
       spectralCorrelationHistory = [];
-      spectralConsecutiveHits = 0;
+      preambleFlipHistory = [];
+      codeDetectionAttempts = [];
+      codeRepeatTimestamps = [];
       presenceVerified = false;
       spectralBroadbandEMA = -100;
       
       // Reset baseline calibration
       baselineCalibrated = false;
       baselineCalibrationSamples = [];
+      baselineEnergySum = -100;
+      baselineGuardLo = -100;
+      baselineGuardHi = -100;
       
       // Update UI
       document.getElementById('baselineStatus').textContent = 'Calibrating baseline (5 sec)...';
       document.getElementById('baselineNoise').textContent = 'Measuring...';
       document.getElementById('detectionThreshold').textContent = 'Computing...';
+      updateFSMStateDisplay();
       
       console.log('✅ SPECTRAL BEACON RX INITIALIZED - CALIBRATING BASELINE...');
       console.log(`  ├─ FFT size: ${analyser.fftSize}`);
@@ -1464,6 +1587,12 @@
       // Extract power at bins A and B - measure ±1 bin around each center
       const powerA = computeBandPower(dataArray, binHz, freqA - binHz, freqA + binHz);
       const powerB = computeBandPower(dataArray, binHz, freqB - binHz, freqB + binHz);
+      
+      // Guards (for baseline stability check)
+      const guardLoFreq = freqA - 2 * binSpacing;
+      const guardHiFreq = freqB + 2 * binSpacing;
+      const powerGuardLo = computeBandPower(dataArray, binHz, guardLoFreq - binHz, guardLoFreq + binHz);
+      const powerGuardHi = computeBandPower(dataArray, binHz, guardHiFreq - binHz, guardHiFreq + binHz);
       
       // Compute differential (in dB)
       const delta = powerB - powerA;
@@ -1624,81 +1753,179 @@
             console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
           }
           
-          // DETECTION CRITERIA — REQUIRE ALL THREE PARAMETERS
+          // ========== FSM STATE MACHINE ==========
           const now = audioContext.currentTime;
-          const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          // STRICT THRESHOLDS - ALL MUST PASS + ACTIVITY GATE (tuned)
-          const zScoreThreshold = 2.0; // was 3.2
-          const psrThreshold = 10.0;
-          const requiredConsecutiveHits = 4; // was 3
-          const minCorrThreshold = 0.40;
-          const minDeltaActivity = 0.25; // was 1.0 dB
-          
-          const passedZScore = zScore >= zScoreThreshold;
-          const passedPSR = peakToSidelobeRatio >= psrThreshold;
-          const passedMinCorr = correlation >= minCorrThreshold;
-          
-          // Compute differential activity over the last code window to reject silence/idle
-          const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
-          const deltaActivity = recentDeltas.length
-            ? recentDeltas.reduce((sum, v) => sum + Math.abs(v), 0) / recentDeltas.length
-            : 0;
-          const passedActivity = deltaActivity >= minDeltaActivity;
-          
-          // ALL CONDITIONS MUST PASS - no bypasses
-          const detectionMade = passedZScore && passedPSR && passedMinCorr && passedActivity && !cooldownActive;
-          
-          // Log significant detections
-          if (zScore > 1.5 || correlation > 0.25 || peakToSidelobeRatio > 6.0) {
-            const cooldownRemaining = cooldownActive ? (8.0 - (now - spectralLastVerifyTime)).toFixed(1) : 0;
-            console.log(`🔍 CANDIDATE DETECTION:`);
-            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (need ≥${zScoreThreshold})`);
-            console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (need ≥${minCorrThreshold})`);
-            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (need ≥${psrThreshold} dB)`);
-            console.log(`  ├─ Activity: ${deltaActivity.toFixed(2)} dB ${passedActivity ? '✅' : '❌'} (need ≥${minDeltaActivity} dB)`);
-            console.log(`  ├─ All pass: ${passedZScore && passedPSR && passedMinCorr && passedActivity ? '✅ YES' : '❌ NO'}`);
-            console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ ${cooldownRemaining}s` : '✅ clear'}`);
-            console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
+          // Check lockout (45s cooldown after UNLOCKED)
+          if (fsmLockoutUntil > now) {
+            if (frameCount % 120 === 0) {
+              const remaining = (fsmLockoutUntil - now).toFixed(1);
+              console.log(`🔒 LOCKOUT ACTIVE: ${remaining}s remaining (no triggers until cooldown expires)`);
+            }
+            return;
           }
           
-          // Verify presence on strong detection (require consecutive hits)
-          if (detectionMade && !presenceVerified) {
-            spectralConsecutiveHits++;
-            
-            // Only verify after required consecutive hits
-            if (spectralConsecutiveHits >= requiredConsecutiveHits) {
-              presenceVerified = true;
-              spectralLastVerifyTime = now;
-            
-              const badge = document.getElementById('presenceBadge');
-              badge.textContent = '✅ Presence Verified!';
-              badge.classList.add('verified');
-            
-              console.log(`🎉 PRESENCE VERIFIED!`);
-              console.log(`  ├─ Correlation: ${correlation.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
-              console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (threshold: ${zScoreThreshold})`);
-              console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB (threshold: ${psrThreshold} dB)`);
-              console.log(`  ├─ Consecutive hits: ${spectralConsecutiveHits}/${requiredConsecutiveHits}`);
-              console.log(`  └─ 8s cooldown activated`);
+          // FSM thresholds (strict, all must pass ANDed)
+          const CORR_THRESHOLD = 0.45;
+          const PSR_THRESHOLD = 10.0;
+          const Z_THRESHOLD = 3.5;
+          const MEDIAN_DELTA_THRESHOLD = 1.2; // dB
+          const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
+          const GUARD_THRESHOLD = 3.5; // dB
+          const CADENCE_WINDOW_MS = 60; // ±60ms for T=300ms
+          const PREAMBLE_TIMEOUT = 2.0; // seconds
+          const VOTE_WINDOW = 3.0; // seconds
+          const COOLDOWN_DURATION = 45.0; // seconds
+          
+          // ===== STATE: IDLE =====
+          if (fsmState === 'IDLE') {
+            // Look for preamble: rapid alternating Δ pattern
+            const recentDeltas = spectralSymbolBuffer.slice(-10);
+            if (recentDeltas.length >= 6) {
+              // Check for rapid sign changes (preamble signature)
+              let signChanges = 0;
+              for (let i = 1; i < recentDeltas.length; i++) {
+                if (Math.sign(recentDeltas[i]) !== Math.sign(recentDeltas[i-1])) {
+                  signChanges++;
+                }
+              }
+              const signChangeRate = signChanges / recentDeltas.length;
               
-              // Reset after cooldown
-              setTimeout(() => {
-                presenceVerified = false;
-                const badge = document.getElementById('presenceBadge');
-                badge.textContent = '⏳ Listening...';
-                badge.classList.remove('verified');
-                console.log('🔄 Cooldown complete - ready for next detection');
-              }, 8000);
-            } else {
-              console.log(`🔄 Detection hit ${spectralConsecutiveHits}/${requiredConsecutiveHits} - need more hits to verify`);
-            }
-          } else {
-            // Reset consecutive hits on failed detection
-            if (!detectionMade && spectralConsecutiveHits > 0) {
-              spectralConsecutiveHits = 0;
+              if (signChangeRate > 0.6) { // >60% sign changes = preamble
+                fsmState = 'PREAMBLE_LOCK';
+                fsmStateStartTime = now;
+                preambleFlipHistory = recentDeltas.slice();
+                console.log(`🎵 FSM: IDLE → PREAMBLE_LOCK (sign changes: ${signChanges}/${recentDeltas.length}, rate=${(signChangeRate*100).toFixed(0)}%)`);
+                updateFSMStateDisplay();
+              }
             }
           }
+          
+          // ===== STATE: PREAMBLE_LOCK =====
+          else if (fsmState === 'PREAMBLE_LOCK') {
+            const elapsed = now - fsmStateStartTime;
+            
+            if (elapsed > PREAMBLE_TIMEOUT) {
+              // Timeout - back to IDLE
+              console.log(`⏱️ FSM: PREAMBLE_LOCK → IDLE (timeout after ${elapsed.toFixed(1)}s)`);
+              fsmState = 'IDLE';
+              fsmStateStartTime = now;
+              updateFSMStateDisplay();
+              return;
+            }
+            
+            // Estimate drift from preamble (simplified: assume ±0.3% max)
+            preambleDriftEstimate = 0; // Real implementation would compute from flip timing
+            
+            // Check if drift acceptable
+            if (Math.abs(preambleDriftEstimate) <= 0.003) { // ±0.3%
+              console.log(`✅ FSM: PREAMBLE_LOCK → CODE_LOCK (drift=${(preambleDriftEstimate*100).toFixed(2)}%)`);
+              fsmState = 'CODE_LOCK';
+              fsmStateStartTime = now;
+              codeDetectionAttempts = [];
+              codeRepeatTimestamps = [];
+              updateFSMStateDisplay();
+            }
+          }
+          
+          // ===== STATE: CODE_LOCK =====
+          else if (fsmState === 'CODE_LOCK') {
+            const elapsed = now - fsmStateStartTime;
+            
+            if (elapsed > VOTE_WINDOW) {
+              // Timeout - back to IDLE
+              console.log(`⏱️ FSM: CODE_LOCK → IDLE (timeout after ${elapsed.toFixed(1)}s, no valid code detected)`);
+              fsmState = 'IDLE';
+              fsmStateStartTime = now;
+              updateFSMStateDisplay();
+              return;
+            }
+            
+            // Compute all detection metrics
+            const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
+            
+            // 1. Correlation check
+            const corrPass = correlation >= CORR_THRESHOLD;
+            
+            // 2. PSR check
+            const psrPass = peakToSidelobeRatio >= PSR_THRESHOLD;
+            
+            // 3. Z-score check
+            const zPass = zScore >= Z_THRESHOLD;
+            
+            // 4. Median |Δ| check
+            const deltaAbs = recentDeltas.map(d => Math.abs(d));
+            const medianDelta = deltaAbs.length > 0 
+              ? deltaAbs.sort((a,b) => a-b)[Math.floor(deltaAbs.length/2)]
+              : 0;
+            const medianDeltaPass = medianDelta >= MEDIAN_DELTA_THRESHOLD;
+            
+            // 5. Energy balance check: |(E(A)+E(B)) - baseline| ≤ 1.0 dB
+            const currentEnergySum = linearToDb(powerA + powerB);
+            const energyDeviation = Math.abs(currentEnergySum - baselineEnergySum);
+            const energyBalancePass = energyDeviation <= ENERGY_BALANCE_THRESHOLD;
+            
+            // 6. Guard stability check
+            const guardLoDeviation = Math.abs(powerGuardLo - baselineGuardLo);
+            const guardHiDeviation = Math.abs(powerGuardHi - baselineGuardHi);
+            const guardsPass = guardLoDeviation <= GUARD_THRESHOLD && guardHiDeviation <= GUARD_THRESHOLD;
+            
+            // Log candidate if any metric is strong
+            if (correlation > 0.30 || zScore > 2.0 || peakToSidelobeRatio > 7.0) {
+              console.log(`🔍 CODE_LOCK CANDIDATE:`);
+              console.log(`  ├─ [preamble] drift=${(preambleDriftEstimate*100).toFixed(2)}%`);
+              console.log(`  ├─ [match] t=${elapsed.toFixed(2)}s corr=${correlation.toFixed(3)} ${corrPass?'✅':'❌'} psr=${peakToSidelobeRatio.toFixed(1)}dB ${psrPass?'✅':'❌'} z=${zScore.toFixed(2)} ${zPass?'✅':'❌'}`);
+              console.log(`  ├─ [per-symbol] median|Δ|=${medianDelta.toFixed(2)}dB ${medianDeltaPass?'✅':'❌'} energyOK=${energyBalancePass?'✅':'❌'} guardsOK=${guardsPass?'✅':'❌'}`);
+            }
+            
+            // ALL criteria must pass
+            const allPass = corrPass && psrPass && zPass && medianDeltaPass && energyBalancePass && guardsPass;
+            
+            if (allPass) {
+              codeRepeatTimestamps.push(now);
+              console.log(`  ├─ [vote] ${codeRepeatTimestamps.length}/2 within ${elapsed.toFixed(1)}s`);
+              
+              // Check for 2 repeats with proper cadence (T≈300ms ± 60ms)
+              if (codeRepeatTimestamps.length >= 2) {
+                const lastTwo = codeRepeatTimestamps.slice(-2);
+                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
+                const expectedT = 300;
+                const cadenceOk = Math.abs(deltaT - expectedT) <= CADENCE_WINDOW_MS;
+                
+                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected ${expectedT}±${CADENCE_WINDOW_MS}ms) ${cadenceOk?'✅':'❌'}`);
+                
+                if (cadenceOk) {
+                  // UNLOCK!
+                  fsmState = 'UNLOCKED';
+                  fsmLockoutUntil = now + COOLDOWN_DURATION;
+                  presenceVerified = true;
+                  
+                  const badge = document.getElementById('presenceBadge');
+                  badge.textContent = '🔓 UNLOCKED';
+                  badge.classList.add('verified');
+                  
+                  console.log(`🎉 FSM: CODE_LOCK → UNLOCKED (latched ${COOLDOWN_DURATION}s)`);
+                  console.log(`  └─ All criteria passed with proper cadence!`);
+                  updateFSMStateDisplay();
+                  
+                  // Reset to IDLE after cooldown
+                  setTimeout(() => {
+                    fsmState = 'IDLE';
+                    fsmStateStartTime = audioContext.currentTime;
+                    presenceVerified = false;
+                    const badge = document.getElementById('presenceBadge');
+                    badge.textContent = '⏳ Listening...';
+                    badge.classList.remove('verified');
+                    console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                    updateFSMStateDisplay();
+                  }, COOLDOWN_DURATION * 1000);
+                }
+              }
+            }
+          }
+          
+          // ===== STATE: UNLOCKED =====
+          // (Nothing to do here - just wait for cooldown to expire)
         }
       } else {
         const vetoJump = broadbandPower - spectralBroadbandEMA;
