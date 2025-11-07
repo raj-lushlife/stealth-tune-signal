@@ -1624,11 +1624,11 @@
             console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
           }
           
-          // DETECTION CRITERIA — ALWAYS ACCEPT ENCODED, NEVER ACCEPT UNENCODED
+          // DETECTION CRITERIA — REQUIRE ALL THREE PARAMETERS
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          // STRICT THRESHOLDS
+          // STRICT THRESHOLDS - ALL MUST PASS
           const zScoreThreshold = 3.2;
           const psrThreshold = 10.0;
           const requiredConsecutiveHits = 1;
@@ -1638,25 +1638,17 @@
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
           const passedMinCorr = correlation >= minCorrThreshold;
           
-          // DISABLE all energy gates - if correlation matches code, accept it
-          const quietGate = false; // DISABLED
-          const toneEnergyGateFail = false; // DISABLED
-          const deltaActivityLow = false; // DISABLED
-          
-          // Strong signature = instant accept (bypass everything)
-          const strongSignature = (zScore >= 2.5 && correlation >= 0.20);
-          
-          // Accept if correlation matches code pattern OR strong signature
-          const detectionMade = (strongSignature || (passedZScore && passedMinCorr)) && !cooldownActive;
+          // ALL THREE MUST PASS - no bypasses, no shortcuts
+          const detectionMade = passedZScore && passedPSR && passedMinCorr && !cooldownActive;
           
           // Log significant detections
-          if (zScore > 1.5 || correlation > 0.15) {
+          if (zScore > 2.0 || correlation > 0.20 || peakToSidelobeRatio > 5.0) {
             const cooldownRemaining = cooldownActive ? (8.0 - (now - spectralLastVerifyTime)).toFixed(1) : 0;
             console.log(`🔍 CANDIDATE DETECTION:`);
-            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (≥${zScoreThreshold})`);
-            console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (≥${minCorrThreshold})`);
-            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
-            console.log(`  ├─ Strong sig: ${strongSignature ? '✅' : '—'} (Z≥2.5, Corr≥0.20)`);
+            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (need ≥${zScoreThreshold})`);
+            console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (need ≥${minCorrThreshold})`);
+            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (need ≥${psrThreshold} dB)`);
+            console.log(`  ├─ All pass: ${passedZScore && passedPSR && passedMinCorr ? '✅ YES' : '❌ NO'}`);
             console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ ${cooldownRemaining}s` : '✅ clear'}`);
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
