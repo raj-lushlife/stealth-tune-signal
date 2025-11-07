@@ -1413,29 +1413,29 @@
         
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
-          // Compute correlation across multiple shifts (PSR-based)
-          const bufLen = spectralSymbolBuffer.length;
-          const maxShifts = Math.min(codeLen, Math.max(1, bufLen - codeLen + 1));
-          const corrVals = [] as number[];
-          const signVals = [] as number[];
-          for (let s = 0; s < maxShifts; s++) {
-            const start = bufLen - codeLen - s;
+          // Phase scan (0..2) and polarity check
+          const phaseMax = 2;
+          let best = { corr: -1, phase: 0, sign: 1 };
+          for (let p = 0; p <= phaseMax; p++) {
+            const start = spectralSymbolBuffer.length - codeLen - p;
             const seg = spectralSymbolBuffer.slice(start, start + codeLen);
             const corrPos = computeCorrelation(seg, PN31_CODE);
             const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
             const corr = Math.max(corrPos, corrNeg);
             const sign = corrNeg > corrPos ? -1 : 1;
-            corrVals.push(corr);
-            signVals.push(sign);
+            if (corr > best.corr) best = { corr, phase: p, sign };
           }
-          let bestIdx = 0; let bestCorr = -1; let bestSign = 1;
-          for (let i = 0; i < corrVals.length; i++) {
-            if (corrVals[i] > bestCorr) { bestCorr = corrVals[i]; bestIdx = i; bestSign = signVals[i]; }
+          const correlation = best.corr;
+          
+          // Update correlation history for Z-score
+          spectralCorrelationHistory.push(correlation);
+          if (spectralCorrelationHistory.length > 100) {
+            spectralCorrelationHistory.shift();
           }
-          const correlation = bestCorr;
-          const others = corrVals.filter((_, i) => i !== bestIdx);
-          const mean = others.length ? others.reduce((a,b)=>a+b,0)/others.length : 0;
-          const variance = others.length ? others.reduce((a,b)=>a + Math.pow(b - mean,2), 0) / others.length : 0;
+          
+          // Compute Z-score (PSR-like)
+          const mean = spectralCorrelationHistory.reduce((a,b) => a+b, 0) / spectralCorrelationHistory.length;
+          const variance = spectralCorrelationHistory.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / spectralCorrelationHistory.length;
           const stdDev = Math.sqrt(variance);
           const zScore = stdDev > 0.001 ? (correlation - mean) / stdDev : 0;
           
@@ -1446,7 +1446,7 @@
           // Log correlation at first full window and periodically every ~codeLen frames
           if (spectralSymbolBuffer.length === codeLen || frameCount % codeLen === 0) {
             console.log(`📊 CORRELATION COMPUTED:`);
-            console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (shift=${bestIdx}, sign=${bestSign > 0 ? '+' : '-'}, shifts=${maxShifts})`);
+            console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
             console.log(`  ├─ Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
             console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
             console.log(`  └─ Thresholds: corr > 0.40, z-score > 3.0, stdDev > 0.15`);
