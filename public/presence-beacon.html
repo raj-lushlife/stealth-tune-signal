@@ -1799,6 +1799,9 @@
           }
           
           // FSM thresholds (calibrated for real-world conditions)
+          // ✅ CHECKPOINT: Working configuration (encoded unlocks, unencoded fails)
+          // Encoded: corr=0.410, psr=9.7dB, z=4.61 → UNLOCK
+          // Unencoded: corr=0.28-0.31, psr=7-8dB, z=0.81-1.10 → REJECT (z-score blocks)
           const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
           const PSR_THRESHOLD = 7.5;
           const Z_THRESHOLD = 2.5;
