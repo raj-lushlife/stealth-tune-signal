@@ -1624,10 +1624,11 @@
           
           // Log significant detections
           if (zScore > 3.0) {
+            const cooldownRemaining = cooldownActive ? (8.0 - (now - spectralLastVerifyTime)).toFixed(1) : 0;
             console.log(`🔍 CANDIDATE DETECTION:`);
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (≥${zScoreThreshold})`);
             console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
-            console.log(`  ├─ Cooldown: ${cooldownActive ? '⏳ active' : '✅ clear'}`);
+            console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ active (${cooldownRemaining}s remaining)` : '✅ clear'}`);
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
           
