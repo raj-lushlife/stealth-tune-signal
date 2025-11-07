@@ -292,13 +292,11 @@
     <div class="instructions">
       <h2>How to Use</h2>
       <ol>
-        <li><strong>Select Mode</strong> - Choose "Spectral Beacon" (recommended) or "Legacy Notch" below</li>
-        <li><strong>Start Audio</strong> - Click the global "Start Audio" button (required for iOS)</li>
-        <li><strong>Load Music</strong> - Upload a song in TX section, or leave empty for pink noise demo</li>
-        <li><strong>Start TX</strong> - On laptop/desktop, click "Start TX" to begin encoding</li>
-        <li><strong>Open on iPhone</strong> - Open this same HTML file on your iPhone, tap "Start Audio"</li>
-        <li><strong>Start RX</strong> - Click "Start RX" on iPhone, place mic 20-40cm from speaker at normal volume</li>
-        <li><strong>Wait for Verification</strong> - Spectral Beacon mode verifies in ~5-10 seconds. Badge will light up green.</li>
+        <li><strong>⚠️ START RX FIRST (Important!)</strong> - On RX device, click "Start RX" to calibrate noise floor for 5 seconds</li>
+        <li><strong>Wait for Calibration</strong> - Watch for "✅ Calibrated - Ready" message before starting TX</li>
+        <li><strong>Then Start TX</strong> - On TX device, click "Start TX" to begin encoding signal</li>
+        <li><strong>Wait for Verification</strong> - RX will detect signal when correlation jumps above baseline + 5σ</li>
+        <li><strong>If Calibration Fails</strong> - You'll see "❌ CALIBRATION FAILED" if TX was running during calibration. Stop TX, click "Recalibrate" on RX, and try again.</li>
       </ol>
     </div>
     
@@ -573,6 +571,9 @@
 
         <!-- Spectral Beacon RX -->
         <div id="spectralRxSection">
+          <div class="warning-banner show" style="background: #2196F3; color: white; display: block;">
+            ⚠️ Start RX FIRST (before TX) to calibrate noise baseline!
+          </div>
           <div class="subsection">
             <h3>Correlation Detection</h3>
             <div class="band-display">
@@ -679,6 +680,7 @@
           <button id="startRxBtn" class="btn">Start RX</button>
           <button id="stopRxBtn" class="btn btn-stop" disabled>Stop RX</button>
           <button id="resetRxBtn" class="btn btn-secondary">Reset Detection</button>
+          <button id="recalibrateBtn" class="btn btn-secondary" disabled>Recalibrate Baseline</button>
         </div>
 
         <div class="presence-badge" id="presenceBadge">
@@ -1346,6 +1348,7 @@
       rxRunning = true;
       document.getElementById('startRxBtn').disabled = true;
       document.getElementById('stopRxBtn').disabled = false;
+      document.getElementById('recalibrateBtn').disabled = false;
       
       // Set up mic pipeline
       micSource = audioContext.createMediaStreamSource(micStream);
@@ -1455,7 +1458,7 @@
           }
           const correlation = best.corr;
           
-          // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
+      // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
           if (!baselineCalibrated) {
             baselineCalibrationSamples.push(correlation);
             
@@ -1464,10 +1467,33 @@
               baselineCorrelationMean = baselineCalibrationSamples.reduce((a,b) => a+b, 0) / baselineCalibrationSamples.length;
               const variance = baselineCalibrationSamples.reduce((a,b) => a + Math.pow(b - baselineCorrelationMean, 2), 0) / baselineCalibrationSamples.length;
               baselineCorrelationStdDev = Math.sqrt(variance);
+              
+              // VALIDATION: Check if calibration makes sense
+              if (baselineCorrelationMean > 0.4) {
+                console.error('⚠️ CALIBRATION FAILED: Baseline correlation too high!');
+                console.error('  ├─ Measured baseline: ' + baselineCorrelationMean.toFixed(3));
+                console.error('  └─ Likely cause: TX was running during calibration (measuring signal instead of noise)');
+                console.error('  └─ ACTION: Stop TX, restart RX to recalibrate noise floor');
+                
+                document.getElementById('baselineStatus').textContent = '❌ CALIBRATION FAILED';
+                document.getElementById('baselineNoise').textContent = 'TX was ON during cal!';
+                document.getElementById('detectionThreshold').textContent = 'Stop TX & recalibrate';
+                
+                // Don't proceed with broken calibration
+                baselineCalibrated = false;
+                baselineCalibrationSamples = [];
+                return;
+              }
+              
+              if (baselineCorrelationStdDev < 0.01) {
+                console.error('⚠️ CALIBRATION SUSPICIOUS: StdDev too low (no variation)');
+                console.error('  └─ Microphone may not be working properly');
+              }
+              
               baselineCalibrated = true;
               
               // Update UI
-              document.getElementById('baselineStatus').textContent = 'Calibrated - Listening for signal';
+              document.getElementById('baselineStatus').textContent = '✅ Calibrated - Ready';
               document.getElementById('baselineNoise').textContent = `Mean: ${baselineCorrelationMean.toFixed(3)}, σ: ${baselineCorrelationStdDev.toFixed(3)}`;
               document.getElementById('detectionThreshold').textContent = `Corr > ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (5σ)`;
               
@@ -1475,7 +1501,7 @@
               console.log(`  ├─ Noise Mean Correlation: ${baselineCorrelationMean.toFixed(3)}`);
               console.log(`  ├─ Noise StdDev: ${baselineCorrelationStdDev.toFixed(3)}`);
               console.log(`  └─ Detection threshold: ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (mean + 5σ)`);
-              console.log('✅ NOW LISTENING FOR ENCODED SIGNAL...');
+              console.log('✅ NOW LISTENING FOR ENCODED SIGNAL... (You can start TX now)');
             } else {
               // Show calibration progress
               if (baselineCalibrationSamples.length % 10 === 0) {
@@ -1522,6 +1548,14 @@
           }
           
           // ADAPTIVE DETECTION THRESHOLDS
+          // Safeguard against broken calibration
+          if (baselineCorrelationMean === 0 && baselineCorrelationStdDev === 0) {
+            console.error('❌ BROKEN BASELINE DETECTED! Baseline never calibrated properly.');
+            console.error('  └─ Stop TX, click Recalibrate, and ensure RX starts with NO signal present');
+            document.getElementById('baselineStatus').textContent = '❌ BROKEN - Recalibrate!';
+            return;
+          }
+          
           const adaptiveThreshold = baselineCorrelationMean + 5 * baselineCorrelationStdDev; // 5-sigma above noise
           const zScoreMin = 3.0;       // Strong z-score requirement
           const minStdDev = baselineCorrelationStdDev * 1.5; // At least 1.5x baseline variation
@@ -1861,6 +1895,7 @@
       
       document.getElementById('startRxBtn').disabled = false;
       document.getElementById('stopRxBtn').disabled = true;
+      document.getElementById('recalibrateBtn').disabled = true;
       document.getElementById('rxStatus').textContent = 'Stopped';
     }
 
@@ -2258,6 +2293,29 @@
     document.getElementById('startRxBtn').addEventListener('click', startRX);
     document.getElementById('stopRxBtn').addEventListener('click', stopRX);
     document.getElementById('resetRxBtn').addEventListener('click', resetRX);
+    document.getElementById('recalibrateBtn').addEventListener('click', () => {
+      if (rxRunning && currentMode === 'spectral') {
+        // Reset baseline state
+        baselineCalibrated = false;
+        baselineCalibrationSamples = [];
+        spectralConsecutiveHits = 0;
+        presenceVerified = false;
+        
+        // Reset badge
+        const badge = document.getElementById('presenceBadge');
+        badge.textContent = '⏳ Recalibrating...';
+        badge.classList.remove('verified');
+        
+        // Update UI
+        document.getElementById('baselineStatus').textContent = 'Recalibrating... 0/70';
+        document.getElementById('baselineNoise').textContent = 'Measuring...';
+        document.getElementById('detectionThreshold').textContent = 'Computing...';
+        document.getElementById('consecutiveHits').textContent = 'calibrating...';
+        
+        console.log('🔄 RECALIBRATION STARTED - Measuring noise floor...');
+        console.log('  └─ Make sure TX is OFF for accurate baseline!');
+      }
+    });
 
     // ==================== INIT ====================
     
