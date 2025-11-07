@@ -1427,7 +1427,19 @@
     }
     
     function detectSpectralSymbol() {
-      if (!rxRunning || !analyser || currentMode !== 'spectral') return;
+      // Debug: Log if function is called but exits early
+      if (!rxRunning) {
+        if (Math.random() < 0.01) console.log('❌ RX: rxRunning = false');
+        return;
+      }
+      if (!analyser) {
+        if (Math.random() < 0.01) console.log('❌ RX: analyser not initialized');
+        return;
+      }
+      if (currentMode !== 'spectral') {
+        if (Math.random() < 0.01) console.log(`❌ RX: wrong mode (${currentMode}, expected spectral)`);
+        return;
+      }
       
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Float32Array(bufferLength);
@@ -1583,6 +1595,11 @@
           document.getElementById('corrZScore').textContent = zScore.toFixed(2);
           document.getElementById('corrPSR').textContent = peakToSidelobeRatio.toFixed(1);
           document.getElementById('consecutiveHits').textContent = spectralConsecutiveHits;
+          
+          // Log RX activity to show it's running
+          if (frameCount % 60 === 0 && frameCount > 0) {
+            console.log(`🎧 RX ACTIVE: Processing frame ${frameCount}, Z=${zScore.toFixed(2)}, PSR=${peakToSidelobeRatio.toFixed(1)}dB`);
+          }
           
           // Log correlation periodically
           if (frameCount % 30 === 0 && frameCount > 0) {
