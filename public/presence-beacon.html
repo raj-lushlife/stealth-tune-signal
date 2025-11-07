@@ -1405,8 +1405,9 @@
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
       
-      // Extract power at bins A and B (wider band for robustness)
-      const bandwidth = Math.max(50, binSpacing * 2); // Hz, much wider for better detection
+      // Extract power at bins A and B - NARROW bandwidth to match TX Q
+      // TX uses Q=8 peaking filters, so we need narrow measurement (10-20Hz)
+      const bandwidth = 20; // Hz, narrow to detect the peak differential
       const powerA = computeBandPower(dataArray, binHz, freqA - bandwidth/2, freqA + bandwidth/2);
       const powerB = computeBandPower(dataArray, binHz, freqB - bandwidth/2, freqB + bandwidth/2);
       
