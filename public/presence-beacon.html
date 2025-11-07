@@ -287,19 +287,35 @@
 </head>
 <body>
   <div class="container">
-    <h1>🎵 Presence Beacon - Imperceptible Audio Drops</h1>
+    <h1>🎵 Presence Beacon - Spectral Verification</h1>
 
     <div class="instructions">
       <h2>How to Use</h2>
       <ol>
-        <li><strong>Start Audio</strong> - Click the global "Start Audio" button below (required for iOS)</li>
+        <li><strong>Select Mode</strong> - Choose "Spectral Beacon" (recommended) or "Legacy Notch" below</li>
+        <li><strong>Start Audio</strong> - Click the global "Start Audio" button (required for iOS)</li>
         <li><strong>Load Music</strong> - Upload a song in TX section, or leave empty for pink noise demo</li>
-        <li><strong>Start TX</strong> - On laptop/desktop, click "Start TX" or "Smoke Test TX" for defaults</li>
+        <li><strong>Start TX</strong> - On laptop/desktop, click "Start TX" to begin encoding</li>
         <li><strong>Open on iPhone</strong> - Open this same HTML file on your iPhone, tap "Start Audio"</li>
         <li><strong>Start RX</strong> - Click "Start RX" on iPhone, place mic 20-40cm from speaker at normal volume</li>
-        <li><strong>Wait for Verification</strong> - Wait 30-60 seconds for 1-3 drops. "Presence Verified" badge will light up</li>
-        <li><strong>Production Tuning</strong> - Increase RX threshold to ~3.5 dB and hits_required to 3-4 for stricter verification</li>
+        <li><strong>Wait for Verification</strong> - Spectral Beacon mode verifies in ~5-10 seconds. Badge will light up green.</li>
       </ol>
+    </div>
+    
+    <div class="global-controls">
+      <div class="control-group">
+        <label style="color: #4CAF50; font-size: 16px; font-weight: bold;">Detection Mode:</label>
+        <div style="display: flex; gap: 16px; margin-top: 12px; justify-content: center;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 12px 20px; background: #333; border-radius: 6px; border: 2px solid #4CAF50;">
+            <input type="radio" name="detectionMode" value="spectral" checked style="width: auto;">
+            <span style="color: #e0e0e0; font-weight: bold;">🎯 Spectral Beacon (Recommended)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 12px 20px; background: #333; border-radius: 6px; border: 2px solid #666;">
+            <input type="radio" name="detectionMode" value="legacy" style="width: auto;">
+            <span style="color: #999;">Legacy Notch Test</span>
+          </label>
+        </div>
+      </div>
     </div>
 
     <div class="warning-banner" id="iosWarning">
@@ -394,7 +410,38 @@
           <div class="readout">If no file: generates pink noise bed at low level for demo</div>
         </div>
 
-        <div class="subsection">
+        <!-- Spectral Beacon Parameters -->
+        <div class="subsection" id="spectralTxParams">
+          <h3>Spectral Beacon Parameters</h3>
+          <div class="grid-2col">
+            <div class="control-group">
+              <label>Center Frequency (Hz):</label>
+              <input type="number" id="spectralCenterFreq" value="12000" min="8000" max="18000" step="100">
+            </div>
+            <div class="control-group">
+              <label>Bin Spacing (Hz):</label>
+              <input type="number" id="spectralBinSpacing" value="50" min="30" max="100" step="10">
+            </div>
+            <div class="control-group">
+              <label>Symbol Duration (ms):</label>
+              <input type="number" id="spectralSymbolDuration" value="70" min="40" max="120" step="5">
+            </div>
+            <div class="control-group">
+              <label>Code Repeats:</label>
+              <input type="number" id="spectralRepeats" value="3" min="1" max="5">
+            </div>
+            <div class="control-group">
+              <label>Symbol Gain (dB):</label>
+              <input type="number" id="spectralGain" value="1.5" min="0.5" max="3" step="0.1">
+            </div>
+          </div>
+          <div class="readout">
+            💡 Beacon uses differential A/B encoding at high frequency for robust verification
+          </div>
+        </div>
+
+        <!-- Legacy Notch Parameters -->
+        <div class="subsection" id="legacyTxParams" style="display:none;">
           <h3>Drop Parameters</h3>
           <div class="grid-2col">
             <div class="control-group">
@@ -492,8 +539,34 @@
       <div class="section">
         <h2>🎤 LISTENER (RX)</h2>
 
-        <div class="subsection">
-          <h3>Band Definitions (Hz)</h3>
+        <!-- Spectral Beacon RX -->
+        <div id="spectralRxSection">
+          <div class="subsection">
+            <h3>Correlation Detection</h3>
+            <div class="band-display">
+              <div class="band-meter">
+                <div class="label">Correlation Peak</div>
+                <div class="value" id="corrPeak">—</div>
+              </div>
+              <div class="band-meter">
+                <div class="label">Z-Score</div>
+                <div class="value" id="corrZScore">—</div>
+              </div>
+              <div class="band-meter">
+                <div class="label">Loudness</div>
+                <div class="value" id="loudnessLevel">—</div>
+              </div>
+            </div>
+            <div class="readout">
+              <div><strong>Correlation Threshold:</strong> 0.50 | <strong>Z-Score Min:</strong> 3.0</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Legacy Notch RX -->
+        <div id="legacyRxSection" style="display:none;">
+          <div class="subsection">
+            <h3>Band Definitions (Hz)</h3>
           <div class="control-group">
             <label>Notch Band:</label>
             <div class="grid-2col">
@@ -517,24 +590,49 @@
           </div>
         </div>
 
-        <div class="subsection">
-          <h3>Detection Parameters</h3>
-          <div class="grid-2col">
-            <div class="control-group">
-              <label>Ratio Threshold (dB):</label>
-              <input type="number" id="ratioThreshold" value="1.5" min="0" max="10" step="0.1">
+            <div class="subsection">
+              <h3>Detection Parameters</h3>
+              <div class="grid-2col">
+                <div class="control-group">
+                  <label>Ratio Threshold (dB):</label>
+                  <input type="number" id="ratioThreshold" value="1.5" min="0" max="10" step="0.1">
+                </div>
+                <div class="control-group">
+                  <label>Hits Required:</label>
+                  <input type="number" id="hitsRequired" value="2" min="1" max="10">
+                </div>
+                <div class="control-group">
+                  <label>Window (s):</label>
+                  <input type="number" id="windowS" value="12" min="2" max="60">
+                </div>
+                <div class="control-group">
+                  <label>Min Inter-Hit Spacing (s):</label>
+                  <input type="number" id="minInterHit" value="0.5" min="0.1" max="5" step="0.1">
+                </div>
+              </div>
             </div>
-            <div class="control-group">
-              <label>Hits Required:</label>
-              <input type="number" id="hitsRequired" value="2" min="1" max="10">
+
+            <div class="band-display">
+              <div class="band-meter">
+                <div class="label">Notch</div>
+                <div class="value" id="notchPower">— dB</div>
+              </div>
+              <div class="band-meter">
+                <div class="label">Guard Avg</div>
+                <div class="value" id="guardPower">— dB</div>
+              </div>
+              <div class="band-meter">
+                <div class="label">Ratio</div>
+                <div class="value" id="ratioPower">— dB</div>
+              </div>
             </div>
-            <div class="control-group">
-              <label>Window (s):</label>
-              <input type="number" id="windowS" value="12" min="2" max="60">
-            </div>
-            <div class="control-group">
-              <label>Min Inter-Hit Spacing (s):</label>
-              <input type="number" id="minInterHit" value="0.5" min="0.1" max="5" step="0.1">
+
+            <div class="readout" id="rxReadout">
+              <div><strong>Status:</strong> <span id="rxStatus">Idle</span></div>
+              <div><strong>Drops Detected:</strong> <span id="individualDrops">0</span></div>
+              <div><strong>Valid Hits:</strong> <span id="validPairs">0</span> / <span id="hitsReq">2</span></div>
+              <div><strong>Last Hit Time:</strong> <span id="lastHitTime">—</span></div>
+              <div><strong>Total Hits:</strong> <span id="totalHits">0</span></div>
             </div>
           </div>
         </div>
@@ -543,29 +641,6 @@
           <button id="startRxBtn" class="btn">Start RX</button>
           <button id="stopRxBtn" class="btn btn-stop" disabled>Stop RX</button>
           <button id="resetRxBtn" class="btn btn-secondary">Reset Detection</button>
-        </div>
-
-        <div class="band-display">
-          <div class="band-meter">
-            <div class="label">Notch</div>
-            <div class="value" id="notchPower">— dB</div>
-          </div>
-          <div class="band-meter">
-            <div class="label">Guard Avg</div>
-            <div class="value" id="guardPower">— dB</div>
-          </div>
-          <div class="band-meter">
-            <div class="label">Ratio</div>
-            <div class="value" id="ratioPower">— dB</div>
-          </div>
-        </div>
-
-        <div class="readout" id="rxReadout">
-          <div><strong>Status:</strong> <span id="rxStatus">Idle</span></div>
-          <div><strong>Drops Detected:</strong> <span id="individualDrops">0</span></div>
-          <div><strong>Valid Hits:</strong> <span id="validPairs">0</span> / <span id="hitsReq">2</span></div>
-          <div><strong>Last Hit Time:</strong> <span id="lastHitTime">—</span></div>
-          <div><strong>Total Hits:</strong> <span id="totalHits">0</span></div>
         </div>
 
         <div class="presence-badge" id="presenceBadge">
@@ -581,6 +656,7 @@
     let masterGain = null;
     let txRunning = false;
     let rxRunning = false;
+    let currentMode = 'spectral'; // 'spectral' or 'legacy'
 
     // TX State
     let bedBuffer = null;
@@ -591,6 +667,10 @@
     let candidateFrames = []; // {time, rms} for masking
     let globalRMS = 0;
     let totalDropsScheduled = 0;
+
+    // Spectral Beacon TX State
+    let spectralFilters = { binA: null, binB: null };
+    let spectralTransmitTimer = null;
 
     // RX State
     let micStream = null;
@@ -605,6 +685,13 @@
     let bandHistory = { notch: [], guardLo: [], guardHi: [] };  // Rolling window for baseline
     let dropFrameCount = 0;  // Count consecutive frames showing drop pattern
     let lastDropDetectionTime = 0;  // Cooldown tracker to prevent multiple detections of same drop
+
+    // Spectral Beacon RX State
+    let spectralSymbolBuffer = [];  // Buffered delta values
+    let spectralCorrelationHistory = [];  // For Z-score calculation
+
+    // PN-31 Gold Code for spectral beacon (±1 sequence)
+    const PN31_CODE = [1,-1,1,1,-1,1,-1,-1,1,1,1,-1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,1,1,1];
 
     // ==================== UTILITY FUNCTIONS ====================
     
@@ -773,6 +860,144 @@
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
+
+      if (currentMode === 'spectral') {
+        await startSpectralTX();
+      } else {
+        await startLegacyTX();
+      }
+    }
+
+    // ==================== SPECTRAL BEACON TX ====================
+    
+    async function startSpectralTX() {
+      txRunning = true;
+      totalDropsScheduled = 0;
+      document.getElementById('startTxBtn').disabled = true;
+      document.getElementById('stopTxBtn').disabled = false;
+      document.getElementById('txStatus').textContent = 'Loading...';
+      
+      // Get or generate bed
+      const fileInput = document.getElementById('bedFile');
+      if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        const arrayBuffer = await file.arrayBuffer();
+        bedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      } else {
+        bedBuffer = generatePinkNoise(120, audioContext.sampleRate);
+      }
+      
+      // Create source
+      bedSource = audioContext.createBufferSource();
+      bedSource.buffer = bedBuffer;
+      bedSource.loop = true;
+      
+      // Get parameters
+      const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
+      const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
+      const symbolGain = parseFloat(document.getElementById('spectralGain').value);
+      
+      const freqA = centerFreq - binSpacing / 2;
+      const freqB = centerFreq + binSpacing / 2;
+      
+      // Create two narrow peaking filters for bins A and B
+      const filterA = audioContext.createBiquadFilter();
+      filterA.type = 'peaking';
+      filterA.frequency.value = freqA;
+      filterA.Q.value = 50; // Very narrow
+      filterA.gain.value = 0;
+      
+      const filterB = audioContext.createBiquadFilter();
+      filterB.type = 'peaking';
+      filterB.frequency.value = freqB;
+      filterB.Q.value = 50;
+      filterB.gain.value = 0;
+      
+      spectralFilters = { binA: filterA, binB: filterB };
+      
+      // Connect: source -> filterA -> filterB -> masterGain -> destination
+      const outputGainDb = parseFloat(document.getElementById('outputGain').value);
+      masterGain.gain.value = dbToLinear(outputGainDb);
+      
+      bedSource.connect(filterA);
+      filterA.connect(filterB);
+      filterB.connect(masterGain);
+      
+      bedSource.start(0);
+      
+      console.log('✅ SPECTRAL BEACON TX INITIALIZED');
+      console.log(`  ├─ Frequency A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
+      console.log(`  ├─ Symbol gain: ±${symbolGain}dB`);
+      console.log(`  └─ Code length: ${PN31_CODE.length} symbols`);
+      
+      document.getElementById('txStatus').textContent = 'Transmitting Spectral Beacon';
+      
+      // Start symbol transmission
+      transmitSpectralSequence();
+    }
+    
+    function transmitSpectralSequence() {
+      if (!txRunning || currentMode !== 'spectral') return;
+      
+      const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
+      const symbolGain = parseFloat(document.getElementById('spectralGain').value);
+      const repeats = parseInt(document.getElementById('spectralRepeats').value);
+      
+      const symbolDurationS = symbolDurationMs / 1000;
+      const fadeTime = 0.01; // 10ms fade
+      
+      let symbolIndex = 0;
+      const totalSymbols = PN31_CODE.length * repeats;
+      
+      function transmitNextSymbol() {
+        if (!txRunning || currentMode !== 'spectral' || !spectralFilters.binA) return;
+        
+        const now = audioContext.currentTime;
+        const codeIndex = symbolIndex % PN31_CODE.length;
+        const symbol = PN31_CODE[codeIndex];
+        
+        // Differential encoding: symbol=+1 means B louder, A quieter
+        // symbol=-1 means A louder, B quieter
+        const gainA = symbol === 1 ? -symbolGain : symbolGain;
+        const gainB = symbol === 1 ? symbolGain : -symbolGain;
+        
+        // Schedule smooth transitions
+        spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
+        spectralFilters.binA.gain.linearRampToValueAtTime(gainA, now + fadeTime);
+        spectralFilters.binA.gain.setValueAtTime(gainA, now + symbolDurationS - fadeTime);
+        spectralFilters.binA.gain.linearRampToValueAtTime(0, now + symbolDurationS);
+        
+        spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
+        spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
+        spectralFilters.binB.gain.setValueAtTime(gainB, now + symbolDurationS - fadeTime);
+        spectralFilters.binB.gain.linearRampToValueAtTime(0, now + symbolDurationS);
+        
+        if (symbolIndex % PN31_CODE.length === 0) {
+          console.log(`🎯 TX: Starting sequence repeat ${Math.floor(symbolIndex / PN31_CODE.length) + 1}/${repeats}`);
+        }
+        
+        symbolIndex++;
+        
+        if (symbolIndex < totalSymbols) {
+          spectralTransmitTimer = setTimeout(transmitNextSymbol, symbolDurationMs);
+        } else {
+          // Restart after brief pause
+          spectralTransmitTimer = setTimeout(() => {
+            symbolIndex = 0;
+            transmitNextSymbol();
+          }, 300); // 300ms pause between sequences
+        }
+        
+        totalDropsScheduled = Math.floor(symbolIndex / PN31_CODE.length);
+        document.getElementById('totalDrops').textContent = totalDropsScheduled;
+      }
+      
+      transmitNextSymbol();
+    }
+
+    // ==================== LEGACY NOTCH TX ====================
+    
+    async function startLegacyTX() {
       
       txRunning = true;
       totalDropsScheduled = 0;
@@ -969,6 +1194,11 @@
       
       txRunning = false;
       
+      if (spectralTransmitTimer) {
+        clearTimeout(spectralTransmitTimer);
+        spectralTransmitTimer = null;
+      }
+      
       if (dropScheduleTimer) {
         clearTimeout(dropScheduleTimer);
         dropScheduleTimer = null;
@@ -978,6 +1208,16 @@
         bedSource.stop();
         bedSource.disconnect();
         bedSource = null;
+      }
+      
+      if (spectralFilters.binA) {
+        spectralFilters.binA.disconnect();
+        spectralFilters.binA = null;
+      }
+      
+      if (spectralFilters.binB) {
+        spectralFilters.binB.disconnect();
+        spectralFilters.binB = null;
       }
       
       if (peakingEQ) {
@@ -1042,6 +1282,151 @@
         alert('Microphone access denied: ' + e.message);
         return;
       }
+
+      if (currentMode === 'spectral') {
+        await startSpectralRX();
+      } else {
+        await startLegacyRX();
+      }
+    }
+
+    // ==================== SPECTRAL BEACON RX ====================
+    
+    async function startSpectralRX() {
+      rxRunning = true;
+      document.getElementById('startRxBtn').disabled = true;
+      document.getElementById('stopRxBtn').disabled = false;
+      
+      // Set up mic pipeline
+      micSource = audioContext.createMediaStreamSource(micStream);
+      
+      const hpf = audioContext.createBiquadFilter();
+      hpf.type = 'highpass';
+      hpf.frequency.value = 200;
+      
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 8192; // Higher FFT for better frequency resolution
+      analyser.smoothingTimeConstant = 0.5;
+      
+      micSource.connect(hpf);
+      hpf.connect(analyser);
+      
+      // Reset state
+      spectralSymbolBuffer = [];
+      spectralCorrelationHistory = [];
+      presenceVerified = false;
+      
+      console.log('✅ SPECTRAL BEACON RX INITIALIZED');
+      console.log(`  ├─ FFT size: ${analyser.fftSize}`);
+      console.log(`  └─ Detection: correlation > 0.50, Z-score > 3.0`);
+      
+      // Start detection loop
+      const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
+      rxInterval = setInterval(detectSpectralSymbol, symbolDurationMs);
+    }
+    
+    function detectSpectralSymbol() {
+      if (!rxRunning || !analyser || currentMode !== 'spectral') return;
+      
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Float32Array(bufferLength);
+      analyser.getFloatFrequencyData(dataArray);
+      
+      const sampleRate = audioContext.sampleRate;
+      const binHz = (sampleRate / 2) / (bufferLength - 1);
+      
+      // Get parameters
+      const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
+      const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
+      
+      const freqA = centerFreq - binSpacing / 2;
+      const freqB = centerFreq + binSpacing / 2;
+      
+      // Extract power at bins A and B (narrow band around each freq)
+      const bandwidth = 20; // Hz
+      const powerA = computeBandPower(dataArray, binHz, freqA - bandwidth, freqA + bandwidth);
+      const powerB = computeBandPower(dataArray, binHz, freqB - bandwidth, freqB + bandwidth);
+      
+      // Compute differential (in linear dB space)
+      const delta = powerB - powerA;
+      
+      // Compute broadband RMS for loudness veto
+      const broadbandPower = computeBandPower(dataArray, binHz, 1000, 15000);
+      
+      // Loudness veto: if extremely loud (>-20dB) and delta saturates, skip
+      const loudnessVeto = (broadbandPower > -20 && Math.abs(delta) > 10);
+      
+      // Update display
+      document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
+      
+      if (!loudnessVeto) {
+        // Add delta to buffer
+        spectralSymbolBuffer.push(delta);
+        
+        // Keep buffer at code length
+        const codeLen = PN31_CODE.length;
+        if (spectralSymbolBuffer.length > codeLen * 2) {
+          spectralSymbolBuffer.shift();
+        }
+        
+        // Try correlation when we have enough symbols
+        if (spectralSymbolBuffer.length >= codeLen) {
+          const correlation = computeCorrelation(spectralSymbolBuffer.slice(-codeLen), PN31_CODE);
+          
+          // Update correlation history for Z-score
+          spectralCorrelationHistory.push(correlation);
+          if (spectralCorrelationHistory.length > 100) {
+            spectralCorrelationHistory.shift();
+          }
+          
+          // Compute Z-score
+          const mean = spectralCorrelationHistory.reduce((a,b) => a+b, 0) / spectralCorrelationHistory.length;
+          const variance = spectralCorrelationHistory.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / spectralCorrelationHistory.length;
+          const stdDev = Math.sqrt(variance);
+          const zScore = stdDev > 0.001 ? (correlation - mean) / stdDev : 0;
+          
+          // Update display
+          document.getElementById('corrPeak').textContent = correlation.toFixed(3);
+          document.getElementById('corrZScore').textContent = zScore.toFixed(2);
+          
+          // Detection thresholds
+          const corrThreshold = 0.50;
+          const zScoreMin = 3.0;
+          
+          if (correlation > corrThreshold && zScore > zScoreMin && !presenceVerified) {
+            presenceVerified = true;
+            const badge = document.getElementById('presenceBadge');
+            badge.textContent = '✅ Presence Verified!';
+            badge.classList.add('verified');
+            console.log(`PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
+          }
+        }
+      } else {
+        console.log('Loudness veto: skipping frame');
+      }
+    }
+    
+    function computeCorrelation(signal, code) {
+      // Normalized correlation between signal and code
+      if (signal.length !== code.length) return 0;
+      
+      let sum = 0;
+      let signalSq = 0;
+      let codeSq = 0;
+      
+      for (let i = 0; i < signal.length; i++) {
+        sum += signal[i] * code[i];
+        signalSq += signal[i] * signal[i];
+        codeSq += code[i] * code[i];
+      }
+      
+      const denom = Math.sqrt(signalSq * codeSq);
+      return denom > 0.001 ? sum / denom : 0;
+    }
+
+    // ==================== LEGACY NOTCH RX ====================
+    
+    async function startLegacyRX() {
       
       rxRunning = true;
       document.getElementById('startRxBtn').disabled = true;
@@ -1544,6 +1929,28 @@
     }
 
     // ==================== EVENT LISTENERS ====================
+    
+    // Mode toggle
+    document.querySelectorAll('input[name="detectionMode"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        currentMode = e.target.value;
+        
+        // Update UI visibility
+        if (currentMode === 'spectral') {
+          document.getElementById('spectralTxParams').style.display = 'block';
+          document.getElementById('legacyTxParams').style.display = 'none';
+          document.getElementById('spectralRxSection').style.display = 'block';
+          document.getElementById('legacyRxSection').style.display = 'none';
+        } else {
+          document.getElementById('spectralTxParams').style.display = 'none';
+          document.getElementById('legacyTxParams').style.display = 'block';
+          document.getElementById('spectralRxSection').style.display = 'none';
+          document.getElementById('legacyRxSection').style.display = 'block';
+        }
+        
+        console.log(`Mode switched to: ${currentMode}`);
+      });
+    });
     
     // Offline encoder
     document.getElementById('processOfflineBtn').addEventListener('click', processOfflineFile);
