@@ -1636,7 +1636,8 @@
           }
         }
       } else {
-        console.log(`⚠️ Loudness veto active: broadband=${broadbandPower.toFixed(2)}dB, delta=${delta.toFixed(2)}dB`);
+        const vetoJump = broadbandPower - spectralBroadbandEMA;
+        console.log(`⚠️ Loudness veto active: broadband=${broadbandPower.toFixed(2)}dB, EMA=${spectralBroadbandEMA.toFixed(2)}dB, jump=${vetoJump.toFixed(2)}dB (>12dB threshold)`);
       }
     }
     
