@@ -745,8 +745,12 @@
     let baselineCorrelationMean = 0;
     let baselineCorrelationStdDev = 0;
     let baselineCalibrationSamples = [];
-    // PN-31 Gold Code for spectral beacon (±1 sequence)
-    const PN31_CODE = [1,-1,1,1,-1,1,-1,-1,1,1,1,-1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,1,1,1];
+    
+    // Broadband baseline (for quiet gate)
+    let baselineBroadbandMean = -100;
+    let baselineBroadbandStdDev = 0;
+    let baselineBroadbandSamples = [];
+    
 
     // ==================== UTILITY FUNCTIONS ====================
     
@@ -1526,12 +1530,18 @@
       // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
           if (!baselineCalibrated) {
             baselineCalibrationSamples.push(correlation);
+            baselineBroadbandSamples.push(broadbandPower);
             
             if (baselineCalibrationSamples.length >= 70) {
               // Compute baseline statistics
               baselineCorrelationMean = baselineCalibrationSamples.reduce((a,b) => a+b, 0) / baselineCalibrationSamples.length;
               const variance = baselineCalibrationSamples.reduce((a,b) => a + Math.pow(b - baselineCorrelationMean, 2), 0) / baselineCalibrationSamples.length;
               baselineCorrelationStdDev = Math.max(Math.sqrt(variance), 0.02);
+              
+              // Compute broadband baseline statistics
+              baselineBroadbandMean = baselineBroadbandSamples.reduce((a,b) => a+b, 0) / baselineBroadbandSamples.length;
+              const bbVar = baselineBroadbandSamples.reduce((a,b) => a + Math.pow(b - baselineBroadbandMean, 2), 0) / baselineBroadbandSamples.length;
+              baselineBroadbandStdDev = Math.max(Math.sqrt(bbVar), 0.5);
               
               // VALIDATION: Check if calibration makes sense
               if (baselineCorrelationMean > 0.4) {
@@ -1547,6 +1557,7 @@
                 // Don't proceed with broken calibration
                 baselineCalibrated = false;
                 baselineCalibrationSamples = [];
+                baselineBroadbandSamples = [];
                 return;
               }
               
@@ -1566,6 +1577,7 @@
               console.log('🎯 BASELINE CALIBRATION COMPLETE:');
               console.log(`  ├─ Noise Mean Correlation: ${baselineCorrelationMean.toFixed(3)}`);
               console.log(`  ├─ Noise StdDev: ${baselineCorrelationStdDev.toFixed(3)}`);
+              console.log(`  ├─ Broadband Mean: ${baselineBroadbandMean.toFixed(1)} dB, σ: ${baselineBroadbandStdDev.toFixed(1)} dB`);
               console.log(`  └─ Detection threshold: ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (mean + 5σ)`);
               console.log('✅ NOW LISTENING FOR ENCODED SIGNAL... (You can start TX now)');
             } else {
@@ -1617,10 +1629,16 @@
           const zScoreThreshold = 3.2;  // Z ≥ 3.2 (balanced threshold)
           const psrThreshold = 8.0;     // PSR ≥ 8 dB (stricter)
           const requiredConsecutiveHits = 2; // Require 2 hits to verify
+          const minCorrThreshold = 0.18; // Absolute correlation floor to avoid low-energy false locks
           
           const passedZScore = zScore >= zScoreThreshold;
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
-          const detectionMade = passedZScore && passedPSR && !cooldownActive;
+          const passedMinCorr = correlation >= minCorrThreshold;
+          
+          // Quiet gate: require energy above baseline by 3 dB or 2σ (whichever higher)
+          const quietGate = broadbandPower < (baselineBroadbandMean + Math.max(3, 2 * baselineBroadbandStdDev));
+          
+          const detectionMade = passedZScore && passedPSR && passedMinCorr && !quietGate && !cooldownActive;
           
           // Log significant detections
           if (zScore > 3.0) {
@@ -1628,6 +1646,8 @@
             console.log(`🔍 CANDIDATE DETECTION:`);
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (≥${zScoreThreshold})`);
             console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
+            console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (≥${minCorrThreshold})`);
+            console.log(`  ├─ Quiet gate: ${quietGate ? '⛔ too quiet' : '✅ clear'} (broadband=${broadbandPower.toFixed(1)} dB, baseline=${baselineBroadbandMean.toFixed(1)}±${baselineBroadbandStdDev.toFixed(1)} dB)`);
             console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ active (${cooldownRemaining}s remaining)` : '✅ clear'}`);
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
