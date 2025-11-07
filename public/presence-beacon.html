@@ -936,13 +936,13 @@
       const filterA = audioContext.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 50; // Very narrow
+      filterA.Q.value = 20; // Broader for real-world playback
       filterA.gain.value = 0;
       
       const filterB = audioContext.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 50;
+      filterB.Q.value = 20; // Broader for real-world playback
       filterB.gain.value = 0;
       
       spectralFilters = { binA: filterA, binB: filterB };
@@ -1375,11 +1375,11 @@
       const freqB = centerFreq + binSpacing / 2;
       
       // Extract power at bins A and B (narrow band around each freq)
-      const bandwidth = 20; // Hz
+      const bandwidth = Math.max(30, binSpacing); // Hz, wider for robustness
       const powerA = computeBandPower(dataArray, binHz, freqA - bandwidth, freqA + bandwidth);
       const powerB = computeBandPower(dataArray, binHz, freqB - bandwidth, freqB + bandwidth);
       
-      // Compute differential (in linear dB space)
+      // Compute differential (in dB)
       const delta = powerB - powerA;
       
       // Compute broadband RMS for loudness veto
@@ -1413,7 +1413,19 @@
         
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
-          const correlation = computeCorrelation(spectralSymbolBuffer.slice(-codeLen), PN31_CODE);
+          // Phase scan (0..2) and polarity check
+          const phaseMax = 2;
+          let best = { corr: -1, phase: 0, sign: 1 };
+          for (let p = 0; p <= phaseMax; p++) {
+            const start = spectralSymbolBuffer.length - codeLen - p;
+            const seg = spectralSymbolBuffer.slice(start, start + codeLen);
+            const corrPos = computeCorrelation(seg, PN31_CODE);
+            const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
+            const corr = Math.max(corrPos, corrNeg);
+            const sign = corrNeg > corrPos ? -1 : 1;
+            if (corr > best.corr) best = { corr, phase: p, sign };
+          }
+          const correlation = best.corr;
           
           // Update correlation history for Z-score
           spectralCorrelationHistory.push(correlation);
@@ -1421,7 +1433,7 @@
             spectralCorrelationHistory.shift();
           }
           
-          // Compute Z-score
+          // Compute Z-score (PSR-like)
           const mean = spectralCorrelationHistory.reduce((a,b) => a+b, 0) / spectralCorrelationHistory.length;
           const variance = spectralCorrelationHistory.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / spectralCorrelationHistory.length;
           const stdDev = Math.sqrt(variance);
@@ -1431,25 +1443,25 @@
           document.getElementById('corrPeak').textContent = correlation.toFixed(3);
           document.getElementById('corrZScore').textContent = zScore.toFixed(2);
           
-          // Log correlation every time we have a full buffer
-          if (spectralSymbolBuffer.length === codeLen) {
+          // Log correlation at first full window and periodically every ~codeLen frames
+          if (spectralSymbolBuffer.length === codeLen || frameCount % codeLen === 0) {
             console.log(`📊 CORRELATION COMPUTED:`);
-            console.log(`  ├─ Peak: ${correlation.toFixed(3)}, Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}`);
-            console.log(`  ├─ Z-score: ${zScore.toFixed(2)}`);
+            console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
+            console.log(`  ├─ Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
             console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
-            console.log(`  └─ Thresholds: corr > 0.50, z-score > 3.0`);
+            console.log(`  └─ Thresholds: corr > 0.30, z-score > 2.0`);
           }
           
-          // Detection thresholds
-          const corrThreshold = 0.50;
-          const zScoreMin = 3.0;
+          // Detection thresholds (tuned for real-world playback)
+          const corrThreshold = 0.30;
+          const zScoreMin = 2.0;
           
           if (correlation > corrThreshold && zScore > zScoreMin && !presenceVerified) {
             presenceVerified = true;
             const badge = document.getElementById('presenceBadge');
             badge.textContent = '✅ Presence Verified!';
             badge.classList.add('verified');
-            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
+            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
           }
         }
       } else {
@@ -1845,13 +1857,13 @@
       const filterA = offlineCtx.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 50;
+      filterA.Q.value = 20; // Broader for real-world playback
       filterA.gain.value = 0;
       
       const filterB = offlineCtx.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 50;
+      filterB.Q.value = 20; // Broader for real-world playback
       filterB.gain.value = 0;
       
       source.connect(filterA);
