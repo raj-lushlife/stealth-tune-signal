@@ -340,10 +340,42 @@
         <div class="control-group">
           <label>Audio File (mp3/wav):</label>
           <input type="file" id="offlineFile" accept="audio/*">
-          <div class="readout">Upload a file to encode with drops and hear the difference</div>
+          <div class="readout">Upload a file to encode and compare original vs encoded playback</div>
         </div>
 
-        <div class="subsection">
+        <!-- Spectral Offline Params -->
+        <div class="subsection" id="offlineSpectralParams">
+          <h3>Spectral Beacon Parameters</h3>
+          <div class="grid-2col">
+            <div class="control-group">
+              <label>Center Frequency (Hz):</label>
+              <input type="number" id="offlineSpectralCenter" value="12000" min="8000" max="18000" step="100">
+            </div>
+            <div class="control-group">
+              <label>Bin Spacing (Hz):</label>
+              <input type="number" id="offlineSpectralSpacing" value="50" min="30" max="100" step="10">
+            </div>
+            <div class="control-group">
+              <label>Symbol Duration (ms):</label>
+              <input type="number" id="offlineSpectralDuration" value="70" min="40" max="120" step="5">
+            </div>
+            <div class="control-group">
+              <label>Code Repeats:</label>
+              <input type="number" id="offlineSpectralRepeats" value="2" min="1" max="5">
+            </div>
+            <div class="control-group">
+              <label>Symbol Gain (dB):</label>
+              <input type="number" id="offlineSpectralGain" value="2.0" min="0.5" max="3" step="0.1">
+            </div>
+            <div class="control-group">
+              <label>Start Time (s):</label>
+              <input type="number" id="offlineSpectralStart" value="2" min="0" max="60" step="0.1">
+            </div>
+          </div>
+        </div>
+
+        <!-- Legacy Offline Params -->
+        <div class="subsection" id="offlineLegacyParams" style="display:none;">
           <h3>Drop Parameters</h3>
           <div class="grid-2col">
             <div class="control-group">
@@ -1736,34 +1768,140 @@
       document.getElementById('processOfflineBtn').disabled = true;
       
       try {
-        // Load original file
         const file = fileInput.files[0];
         const arrayBuffer = await file.arrayBuffer();
         offlineOriginalBuffer = await audioContext.decodeAudioData(arrayBuffer);
         
+        console.log('🎛️ OFFLINE ENCODER: File loaded');
+        console.log(`  ├─ File: ${file.name}`);
+        console.log(`  ├─ Duration: ${offlineOriginalBuffer.duration.toFixed(2)}s`);
+        console.log(`  ├─ Channels: ${offlineOriginalBuffer.numberOfChannels}`);
+        console.log(`  ├─ Sample rate: ${offlineOriginalBuffer.sampleRate}Hz`);
+        console.log(`  └─ Mode: ${currentMode}`);
+        
         document.getElementById('offlineDuration').textContent = offlineOriginalBuffer.duration.toFixed(1) + 's';
-        document.getElementById('offlineStatus').textContent = 'Processing...';
-        
-        // Get parameters
-        const dropCenter = parseFloat(document.getElementById('offlineDropCenter').value);
-        const dropBw = parseFloat(document.getElementById('offlineDropBw').value);
-        const dropDepth = parseFloat(document.getElementById('offlineDropDepth').value);
-        const dropLenMs = parseFloat(document.getElementById('offlineDropLen').value);
-        const dropStart = parseFloat(document.getElementById('offlineDropStart').value);
-        const dropCount = parseInt(document.getElementById('offlineDropCount').value);
-        
-        console.log('🎛️ OFFLINE ENCODER: Starting processing');
-        console.log(`  ├─ File: ${file.name}, duration: ${offlineOriginalBuffer.duration.toFixed(1)}s`);
-        console.log(`  ├─ Drops: ${dropCount} × ${dropLenMs}ms @ ${dropDepth}dB`);
-        console.log(`  ├─ Frequency: ${dropCenter}Hz (BW: ${dropBw}Hz, Q: ${(dropCenter/dropBw).toFixed(2)})`);
-        console.log(`  └─ Schedule: starting at ${dropStart}s`);
-        
-        // Create offline context for processing
-        const offlineCtx = new OfflineAudioContext(
-          offlineOriginalBuffer.numberOfChannels,
-          offlineOriginalBuffer.length,
-          offlineOriginalBuffer.sampleRate
-        );
+
+        if (currentMode === 'spectral') {
+          await processOfflineSpectral();
+        } else {
+          await processOfflineLegacy();
+        }
+      } catch (e) {
+        console.error('❌ OFFLINE ENCODING ERROR:', e);
+        document.getElementById('offlineStatus').textContent = 'Error: ' + e.message;
+        document.getElementById('processOfflineBtn').disabled = false;
+      }
+    }
+    
+    async function processOfflineSpectral() {
+      document.getElementById('offlineStatus').textContent = 'Encoding spectral beacon...';
+      
+      const centerFreq = parseFloat(document.getElementById('offlineSpectralCenter').value);
+      const binSpacing = parseFloat(document.getElementById('offlineSpectralSpacing').value);
+      const symbolDurationMs = parseFloat(document.getElementById('offlineSpectralDuration').value);
+      const repeats = parseInt(document.getElementById('offlineSpectralRepeats').value);
+      const symbolGain = parseFloat(document.getElementById('offlineSpectralGain').value);
+      const startTime = parseFloat(document.getElementById('offlineSpectralStart').value);
+      
+      const freqA = centerFreq - binSpacing / 2;
+      const freqB = centerFreq + binSpacing / 2;
+      const symbolDurationS = symbolDurationMs / 1000;
+      
+      console.log('🎯 SPECTRAL OFFLINE ENCODING:');
+      console.log(`  ├─ Freq A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
+      console.log(`  ├─ Symbol duration: ${symbolDurationMs}ms (±${symbolGain}dB)`);
+      console.log(`  ├─ Code: PN-31 × ${repeats} repeats = ${PN31_CODE.length * repeats} symbols`);
+      console.log(`  └─ Total duration: ${(PN31_CODE.length * repeats * symbolDurationS).toFixed(2)}s`);
+      
+      const offlineCtx = new OfflineAudioContext(
+        offlineOriginalBuffer.numberOfChannels,
+        offlineOriginalBuffer.length,
+        offlineOriginalBuffer.sampleRate
+      );
+      
+      const source = offlineCtx.createBufferSource();
+      source.buffer = offlineOriginalBuffer;
+      
+      // Create filters for bins A and B
+      const filterA = offlineCtx.createBiquadFilter();
+      filterA.type = 'peaking';
+      filterA.frequency.value = freqA;
+      filterA.Q.value = 50;
+      filterA.gain.value = 0;
+      
+      const filterB = offlineCtx.createBiquadFilter();
+      filterB.type = 'peaking';
+      filterB.frequency.value = freqB;
+      filterB.Q.value = 50;
+      filterB.gain.value = 0;
+      
+      source.connect(filterA);
+      filterA.connect(filterB);
+      filterB.connect(offlineCtx.destination);
+      
+      // Schedule symbols
+      const fadeTime = 0.01;
+      let symbolsEncoded = 0;
+      
+      for (let repeat = 0; repeat < repeats; repeat++) {
+        for (let i = 0; i < PN31_CODE.length; i++) {
+          const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS;
+          
+          if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
+            const symbol = PN31_CODE[i];
+            const gainA = symbol === 1 ? -symbolGain : symbolGain;
+            const gainB = symbol === 1 ? symbolGain : -symbolGain;
+            
+            // Schedule smooth ramps
+            filterA.gain.setValueAtTime(0, symbolTime);
+            filterA.gain.linearRampToValueAtTime(gainA, symbolTime + fadeTime);
+            filterA.gain.setValueAtTime(gainA, symbolTime + symbolDurationS - fadeTime);
+            filterA.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
+            
+            filterB.gain.setValueAtTime(0, symbolTime);
+            filterB.gain.linearRampToValueAtTime(gainB, symbolTime + fadeTime);
+            filterB.gain.setValueAtTime(gainB, symbolTime + symbolDurationS - fadeTime);
+            filterB.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
+            
+            symbolsEncoded++;
+            
+            if (i === 0) {
+              console.log(`  ✓ Repeat ${repeat + 1}/${repeats}: t=${symbolTime.toFixed(2)}s, symbol=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(2)}dB, gainB=${gainB.toFixed(2)}dB`);
+            }
+          }
+        }
+      }
+      
+      console.log(`  ✅ Scheduled ${symbolsEncoded} symbols`);
+      
+      source.start(0);
+      offlineEncodedBuffer = await offlineCtx.startRendering();
+      
+      console.log('✅ SPECTRAL ENCODING COMPLETE');
+      
+      await finalizeOfflineEncoding(symbolsEncoded);
+    }
+    
+    async function processOfflineLegacy() {
+      document.getElementById('offlineStatus').textContent = 'Processing legacy notch drops...';
+      
+      const dropCenter = parseFloat(document.getElementById('offlineDropCenter').value);
+      const dropBw = parseFloat(document.getElementById('offlineDropBw').value);
+      const dropDepth = parseFloat(document.getElementById('offlineDropDepth').value);
+      const dropLenMs = parseFloat(document.getElementById('offlineDropLen').value);
+      const dropStart = parseFloat(document.getElementById('offlineDropStart').value);
+      const dropCount = parseInt(document.getElementById('offlineDropCount').value);
+      
+      console.log('🎛️ LEGACY OFFLINE ENCODING:');
+      console.log(`  ├─ Drops: ${dropCount} × ${dropLenMs}ms @ ${dropDepth}dB`);
+      console.log(`  ├─ Frequency: ${dropCenter}Hz (BW: ${dropBw}Hz, Q: ${(dropCenter/dropBw).toFixed(2)})`);
+      console.log(`  └─ Starting at ${dropStart}s`);
+      
+      const offlineCtx = new OfflineAudioContext(
+        offlineOriginalBuffer.numberOfChannels,
+        offlineOriginalBuffer.length,
+        offlineOriginalBuffer.sampleRate
+      );
         
         // Create source
         const source = offlineCtx.createBufferSource();
@@ -1829,36 +1967,32 @@
             console.log(`      Center: ${dropDepth}dB @ ${dropCenter}Hz, Shelves: ${(dropDepth*0.3).toFixed(1)}dB`);
           }
         }
-        
-        source.start(0);
-        
-        // Render
-        offlineEncodedBuffer = await offlineCtx.startRendering();
-        
-        console.log(`✅ OFFLINE ENCODING COMPLETE: ${dropsScheduled} drops encoded`);
-        
-        // Create audio elements
-        const originalBlob = await bufferToWav(offlineOriginalBuffer);
-        const encodedBlob = await bufferToWav(offlineEncodedBuffer);
-        
-        const originalAudio = document.getElementById('originalAudio');
-        const encodedAudio = document.getElementById('encodedAudio');
-        
-        originalAudio.src = URL.createObjectURL(originalBlob);
-        encodedAudio.src = URL.createObjectURL(encodedBlob);
-        
-        // Show playback section
-        document.getElementById('offlinePlayback').style.display = 'block';
-        document.getElementById('offlineStatus').textContent = 'Complete! Compare playback above';
-        document.getElementById('offlineDropsEncoded').textContent = dropsScheduled;
-        document.getElementById('processOfflineBtn').disabled = false;
-        document.getElementById('downloadOfflineBtn').disabled = false;
-        
-      } catch (e) {
-        console.error('Offline encoding error:', e);
-        document.getElementById('offlineStatus').textContent = 'Error: ' + e.message;
-        document.getElementById('processOfflineBtn').disabled = false;
-      }
+      
+      source.start(0);
+      offlineEncodedBuffer = await offlineCtx.startRendering();
+      
+      console.log(`✅ LEGACY ENCODING COMPLETE: ${dropsScheduled} drops encoded`);
+      
+      await finalizeOfflineEncoding(dropsScheduled);
+    }
+    
+    async function finalizeOfflineEncoding(itemsEncoded) {
+      const originalBlob = await bufferToWav(offlineOriginalBuffer);
+      const encodedBlob = await bufferToWav(offlineEncodedBuffer);
+      
+      const originalAudio = document.getElementById('originalAudio');
+      const encodedAudio = document.getElementById('encodedAudio');
+      
+      originalAudio.src = URL.createObjectURL(originalBlob);
+      encodedAudio.src = URL.createObjectURL(encodedBlob);
+      
+      document.getElementById('offlinePlayback').style.display = 'block';
+      document.getElementById('offlineStatus').textContent = `Complete! Encoded ${itemsEncoded} ${currentMode === 'spectral' ? 'symbols' : 'drops'}`;
+      document.getElementById('offlineDropsEncoded').textContent = itemsEncoded;
+      document.getElementById('processOfflineBtn').disabled = false;
+      document.getElementById('downloadOfflineBtn').disabled = false;
+      
+      console.log('✅ Offline encoding finalized - ready for playback/download');
     }
     
     function downloadEncodedFile() {
@@ -1935,20 +2069,24 @@
       radio.addEventListener('change', (e) => {
         currentMode = e.target.value;
         
-        // Update UI visibility
+        // Update UI visibility for live sections
         if (currentMode === 'spectral') {
           document.getElementById('spectralTxParams').style.display = 'block';
           document.getElementById('legacyTxParams').style.display = 'none';
           document.getElementById('spectralRxSection').style.display = 'block';
           document.getElementById('legacyRxSection').style.display = 'none';
+          document.getElementById('offlineSpectralParams').style.display = 'block';
+          document.getElementById('offlineLegacyParams').style.display = 'none';
         } else {
           document.getElementById('spectralTxParams').style.display = 'none';
           document.getElementById('legacyTxParams').style.display = 'block';
           document.getElementById('spectralRxSection').style.display = 'none';
           document.getElementById('legacyRxSection').style.display = 'block';
+          document.getElementById('offlineSpectralParams').style.display = 'none';
+          document.getElementById('offlineLegacyParams').style.display = 'block';
         }
         
-        console.log(`Mode switched to: ${currentMode}`);
+        console.log(`✓ Mode switched to: ${currentMode.toUpperCase()}`);
       });
     });
     
