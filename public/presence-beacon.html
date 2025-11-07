@@ -951,13 +951,13 @@
       const filterA = audioContext.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 20; // High Q for sharp, narrow peak = stronger differential
+      filterA.Q.value = 1000; // Ultra-narrow to minimize overlap (~12 Hz BW at 12kHz)
       filterA.gain.value = 0;
       
       const filterB = audioContext.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 20; // High Q for sharp, narrow peak = stronger differential
+      filterB.Q.value = 1000; // Ultra-narrow to minimize overlap (~12 Hz BW at 12kHz)
       filterB.gain.value = 0;
       
       spectralFilters = { binA: filterA, binB: filterB };
@@ -1359,7 +1359,7 @@
       
       analyser = audioContext.createAnalyser();
       analyser.fftSize = 8192; // Higher FFT for better frequency resolution
-      analyser.smoothingTimeConstant = 0.5;
+      analyser.smoothingTimeConstant = 0.2; // Faster response to 70ms symbols
       
       micSource.connect(hpf);
       hpf.connect(analyser);
