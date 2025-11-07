@@ -603,6 +603,7 @@
               <div><strong>Status:</strong> <span id="baselineStatus">Waiting to start...</span></div>
               <div><strong>Baseline Noise:</strong> <span id="baselineNoise">Not calibrated</span></div>
               <div><strong>Detection Threshold:</strong> <span id="detectionThreshold">—</span></div>
+              <div><strong>Consecutive Hits:</strong> <span id="consecutiveHits">0</span></div>
             </div>
           </div>
         </div>
@@ -1456,8 +1457,8 @@
       const alpha = 0.3; // ~200ms EMA
       spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
       
-      // Loudness veto: if broadband jumps >18dB above EMA (clap/shout)
-      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 18);
+      // Loudness veto: DISABLED (was blocking too many valid frames)
+      const loudnessVeto = false; // (broadbandPower - spectralBroadbandEMA > 18);
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
@@ -1581,6 +1582,7 @@
           document.getElementById('corrPeak').textContent = correlation.toFixed(3);
           document.getElementById('corrZScore').textContent = zScore.toFixed(2);
           document.getElementById('corrPSR').textContent = peakToSidelobeRatio.toFixed(1);
+          document.getElementById('consecutiveHits').textContent = spectralConsecutiveHits;
           
           // Log correlation periodically
           if (frameCount % 30 === 0 && frameCount > 0) {
@@ -1613,6 +1615,7 @@
           
           // Verify presence on strong detection
           if (detectionMade && !presenceVerified) {
+            spectralConsecutiveHits++;
             presenceVerified = true;
             spectralLastVerifyTime = now;
             
