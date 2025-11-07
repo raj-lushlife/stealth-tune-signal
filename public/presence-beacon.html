@@ -1628,12 +1628,12 @@
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          // STRICT THRESHOLDS - ALL MUST PASS + ACTIVITY GATE
-          const zScoreThreshold = 3.2;
+          // STRICT THRESHOLDS - ALL MUST PASS + ACTIVITY GATE (tuned)
+          const zScoreThreshold = 2.0; // was 3.2
           const psrThreshold = 10.0;
-          const requiredConsecutiveHits = 3; // require multiple consecutive frames to confirm
+          const requiredConsecutiveHits = 4; // was 3
           const minCorrThreshold = 0.40;
-          const minDeltaActivity = 1.0; // dB avg |Δ| across last code window
+          const minDeltaActivity = 0.25; // was 1.0 dB
           
           const passedZScore = zScore >= zScoreThreshold;
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
@@ -1650,7 +1650,7 @@
           const detectionMade = passedZScore && passedPSR && passedMinCorr && passedActivity && !cooldownActive;
           
           // Log significant detections
-          if (zScore > 2.0 || correlation > 0.20 || peakToSidelobeRatio > 5.0) {
+          if (zScore > 1.5 || correlation > 0.25 || peakToSidelobeRatio > 6.0) {
             const cooldownRemaining = cooldownActive ? (8.0 - (now - spectralLastVerifyTime)).toFixed(1) : 0;
             console.log(`🔍 CANDIDATE DETECTION:`);
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (need ≥${zScoreThreshold})`);
