@@ -1391,6 +1391,16 @@
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
       
+      // Detailed logging every 10 frames
+      const frameCount = spectralSymbolBuffer.length;
+      if (frameCount % 10 === 0) {
+        console.log(`🎯 SPECTRAL RX @ frame ${frameCount}:`);
+        console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz`);
+        console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB, Δ: ${delta.toFixed(2)}dB`);
+        console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, Veto: ${loudnessVeto}`);
+        console.log(`  └─ Buffer size: ${spectralSymbolBuffer.length}/${PN31_CODE.length}`);
+      }
+      
       if (!loudnessVeto) {
         // Add delta to buffer
         spectralSymbolBuffer.push(delta);
@@ -1421,6 +1431,15 @@
           document.getElementById('corrPeak').textContent = correlation.toFixed(3);
           document.getElementById('corrZScore').textContent = zScore.toFixed(2);
           
+          // Log correlation every time we have a full buffer
+          if (spectralSymbolBuffer.length === codeLen) {
+            console.log(`📊 CORRELATION COMPUTED:`);
+            console.log(`  ├─ Peak: ${correlation.toFixed(3)}, Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}`);
+            console.log(`  ├─ Z-score: ${zScore.toFixed(2)}`);
+            console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
+            console.log(`  └─ Thresholds: corr > 0.50, z-score > 3.0`);
+          }
+          
           // Detection thresholds
           const corrThreshold = 0.50;
           const zScoreMin = 3.0;
@@ -1430,11 +1449,11 @@
             const badge = document.getElementById('presenceBadge');
             badge.textContent = '✅ Presence Verified!';
             badge.classList.add('verified');
-            console.log(`PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
+            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
           }
         }
       } else {
-        console.log('Loudness veto: skipping frame');
+        console.log(`⚠️ Loudness veto active: broadband=${broadbandPower.toFixed(2)}dB, delta=${delta.toFixed(2)}dB`);
       }
     }
     
