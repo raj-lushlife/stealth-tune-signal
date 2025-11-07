@@ -1647,7 +1647,7 @@
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
           // Phase scan and polarity check
-          const phaseMax = 3; // Check 4 phase offsets
+          const phaseMax = 7; // Check 8 phase offsets (better tolerance to jitter)
           let best = { corr: -1, phase: 0, sign: 1 };
           let allCorrelations = []; // For PSR calculation
           
@@ -1799,15 +1799,15 @@
           }
           
           // FSM thresholds (calibrated for real-world conditions)
-          const CORR_THRESHOLD = 0.40;
+          const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
           const PSR_THRESHOLD = 7.5;
           const Z_THRESHOLD = 2.5;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
           const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
-          const GUARD_THRESHOLD = 8.0; // dB (relaxed: guards pick up TX leakage)
-          const CADENCE_WINDOW_MS = 60; // ±60ms for T=300ms
+          const GUARD_THRESHOLD = 10.0; // dB (guards pick up TX leakage at close range)
+          const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 2.0; // seconds
-          const VOTE_WINDOW = 3.0; // seconds
+          const VOTE_WINDOW = 5.0; // seconds (allow 2 repeats of PN31 @ 60ms symbols)
           const COOLDOWN_DURATION = 45.0; // seconds
           
           // ===== STATE: IDLE =====
@@ -1919,16 +1919,19 @@
               codeRepeatTimestamps.push(now);
               console.log(`  ├─ [vote] ${codeRepeatTimestamps.length}/2 within ${elapsed.toFixed(1)}s`);
               
-              // Check for 2 repeats with proper cadence (T≈300ms ± 60ms)
-              if (codeRepeatTimestamps.length >= 2) {
-                const lastTwo = codeRepeatTimestamps.slice(-2);
-                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
-                const expectedT = 300;
-                const cadenceOk = Math.abs(deltaT - expectedT) <= CADENCE_WINDOW_MS;
-                
-                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected ${expectedT}±${CADENCE_WINDOW_MS}ms) ${cadenceOk?'✅':'❌'}`);
-                
-                if (cadenceOk) {
+                // Check for cadence: accept either per-frame (~symbol) or per-repeat (~codeLen*symbol)
+                if (codeRepeatTimestamps.length >= 2) {
+                  const lastTwo = codeRepeatTimestamps.slice(-2);
+                  const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
+                  const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
+                  const expectedRepeatMs = PN31_CODE.length * symbolMs;
+                  const nearFrame = Math.abs(deltaT - symbolMs) <= Math.max(symbolMs * 0.5, 40);
+                  const nearRepeat = Math.abs(deltaT - expectedRepeatMs) <= Math.max(expectedRepeatMs * 0.25, 150);
+                  const cadenceOk = nearFrame || nearRepeat;
+                  
+                  console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (symbol≈${symbolMs}ms, repeat≈${Math.round(expectedRepeatMs)}ms) ${cadenceOk?'✅':'❌'}`);
+                  
+                  if (cadenceOk) {
                   // UNLOCK!
                   fsmState = 'UNLOCKED';
                   fsmLockoutUntil = now + COOLDOWN_DURATION;
