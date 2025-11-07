@@ -340,11 +340,11 @@
             </div>
             <div class="control-group">
               <label>Drop Depth (dB):</label>
-              <input type="number" id="dropDepth" value="-2.0" min="-4" max="-0.5" step="0.1">
+              <input type="number" id="dropDepth" value="-3.5" min="-4" max="-0.5" step="0.1">
             </div>
             <div class="control-group">
               <label>Drop Length (ms):</label>
-              <input type="number" id="dropLen" value="160" min="50" max="500">
+              <input type="number" id="dropLen" value="200" min="50" max="500">
             </div>
             <div class="control-group">
               <label>Fade In (ms):</label>
@@ -459,7 +459,7 @@
           <div class="grid-2col">
             <div class="control-group">
               <label>Ratio Threshold (dB):</label>
-              <input type="number" id="ratioThreshold" value="2.5" min="0" max="10" step="0.1">
+              <input type="number" id="ratioThreshold" value="1.5" min="0" max="10" step="0.1">
             </div>
             <div class="control-group">
               <label>Hits Required (pairs):</label>
@@ -767,6 +767,7 @@
       peakingEQ.connect(masterGain);
       
       bedSource.start(0);
+      bedSource._startTime = audioContext.currentTime;
       
       // Start real-time gain monitor
       let gainMonitorInterval;
@@ -884,6 +885,9 @@
       const holdTime = Math.max(0, dropLenS - fadeInS - fadeOutS);
       const gain = peakingEQ.gain;
       
+      // Calculate second drop time BEFORE logging
+      const secondDropTime = actualTime + pairSpacingS;
+      
       // Log encoder parameters
       console.log(`🔊 ENCODER: Scheduling drop pair at t=${actualTime.toFixed(3)}s`);
       console.log(`  ├─ Frequency: ${peakingEQ.frequency.value.toFixed(0)} Hz, Q: ${peakingEQ.Q.value.toFixed(2)}`);
@@ -900,7 +904,6 @@
       console.log(`  📍 Drop 1: ${actualTime.toFixed(3)}s → ${(actualTime + fadeInS).toFixed(3)}s [ramp to ${dropDepth}dB] → ${(actualTime + fadeInS + holdTime + fadeOutS).toFixed(3)}s [back to 0dB]`);
       
       // Schedule SECOND drop (offset by pair spacing)
-      const secondDropTime = actualTime + pairSpacingS;
       gain.setValueAtTime(0, secondDropTime);
       gain.linearRampToValueAtTime(dropDepth, secondDropTime + fadeInS);
       gain.setValueAtTime(dropDepth, secondDropTime + fadeInS + holdTime);
