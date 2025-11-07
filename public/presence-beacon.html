@@ -951,13 +951,13 @@
       const filterA = audioContext.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 8; // Much broader for better transmission
+      filterA.Q.value = 20; // High Q for sharp, narrow peak = stronger differential
       filterA.gain.value = 0;
       
       const filterB = audioContext.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 8; // Much broader for better transmission
+      filterB.Q.value = 20; // High Q for sharp, narrow peak = stronger differential
       filterB.gain.value = 0;
       
       spectralFilters = { binA: filterA, binB: filterB };
@@ -991,7 +991,7 @@
       const repeats = parseInt(document.getElementById('spectralRepeats').value);
       
       const symbolDurationS = symbolDurationMs / 1000;
-      const fadeTime = 0.01; // 10ms fade
+      const fadeTime = Math.min(0.005, symbolDurationS * 0.1); // 5ms or 10% of symbol, whichever is shorter
       
       let symbolIndex = 0;
       const totalSymbols = PN31_CODE.length * repeats;
@@ -1013,16 +1013,16 @@
           console.log(`📡 TX @ symbol ${symbolIndex}: code[${codeIndex}]=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB, Δ=${(gainB - gainA).toFixed(1)}dB`);
         }
         
-        // Schedule smooth transitions
+        // CRITICAL: Crossfade between states, DON'T fade to zero!
+        // Maintain constant energy by fading from one state to the next
+        spectralFilters.binA.gain.cancelScheduledValues(now);
+        spectralFilters.binB.gain.cancelScheduledValues(now);
+        
         spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
         spectralFilters.binA.gain.linearRampToValueAtTime(gainA, now + fadeTime);
-        spectralFilters.binA.gain.setValueAtTime(gainA, now + symbolDurationS - fadeTime);
-        spectralFilters.binA.gain.linearRampToValueAtTime(0, now + symbolDurationS);
         
         spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
         spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
-        spectralFilters.binB.gain.setValueAtTime(gainB, now + symbolDurationS - fadeTime);
-        spectralFilters.binB.gain.linearRampToValueAtTime(0, now + symbolDurationS);
         
         if (symbolIndex % PN31_CODE.length === 0) {
           console.log(`🎯 TX: Starting sequence repeat ${Math.floor(symbolIndex / PN31_CODE.length) + 1}/${repeats}`);
