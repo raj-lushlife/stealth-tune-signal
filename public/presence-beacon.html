@@ -374,10 +374,6 @@
               <label>Jitter ± (s):</label>
               <input type="number" id="jitter" value="0.5" min="0" max="10" step="0.5">
             </div>
-            <div class="control-group">
-              <label>Drop Pair Spacing (ms):</label>
-              <input type="number" id="pairSpacing" value="300" min="200" max="500" step="10">
-            </div>
           </div>
         </div>
 
@@ -418,10 +414,10 @@
 
         <div class="readout" id="txReadout">
           <div><strong>Status:</strong> <span id="txStatus">Idle</span></div>
-          <div><strong>Next Pair In:</strong> <span id="nextDropCountdown">—</span></div>
+          <div><strong>Next Drop In:</strong> <span id="nextDropCountdown">—</span></div>
           <div><strong>Last Scheduled:</strong> <span id="lastScheduled">—</span></div>
           <div><strong>Last Masking RMS:</strong> <span id="lastMaskingRms">—</span></div>
-          <div><strong>Total Pairs:</strong> <span id="totalDrops">0</span></div>
+          <div><strong>Total Drops:</strong> <span id="totalDrops">0</span></div>
         </div>
       </div>
 
@@ -462,7 +458,7 @@
               <input type="number" id="ratioThreshold" value="1.5" min="0" max="10" step="0.1">
             </div>
             <div class="control-group">
-              <label>Hits Required (pairs):</label>
+              <label>Hits Required:</label>
               <input type="number" id="hitsRequired" value="2" min="1" max="10">
             </div>
             <div class="control-group">
@@ -472,14 +468,6 @@
             <div class="control-group">
               <label>Min Inter-Hit Spacing (s):</label>
               <input type="number" id="minInterHit" value="0.5" min="0.1" max="5" step="0.1">
-            </div>
-            <div class="control-group">
-              <label>Expected Pair Spacing (ms):</label>
-              <input type="number" id="expectedPairSpacing" value="300" min="200" max="500" step="10">
-            </div>
-            <div class="control-group">
-              <label>Pair Tolerance (±ms):</label>
-              <input type="number" id="pairTolerance" value="60" min="20" max="120" step="5">
             </div>
           </div>
         </div>
@@ -507,10 +495,10 @@
 
         <div class="readout" id="rxReadout">
           <div><strong>Status:</strong> <span id="rxStatus">Idle</span></div>
-          <div><strong>Individual Drops:</strong> <span id="individualDrops">0</span></div>
-          <div><strong>Valid Pairs:</strong> <span id="validPairs">0</span> / <span id="hitsReq">2</span></div>
-          <div><strong>Last Pair Time:</strong> <span id="lastHitTime">—</span></div>
-          <div><strong>Total Pairs:</strong> <span id="totalHits">0</span></div>
+          <div><strong>Drops Detected:</strong> <span id="individualDrops">0</span></div>
+          <div><strong>Valid Hits:</strong> <span id="validPairs">0</span> / <span id="hitsReq">2</span></div>
+          <div><strong>Last Hit Time:</strong> <span id="lastHitTime">—</span></div>
+          <div><strong>Total Hits:</strong> <span id="totalHits">0</span></div>
         </div>
 
         <div class="presence-badge" id="presenceBadge">
@@ -542,11 +530,9 @@
     let micSource = null;
     let analyser = null;
     let rxInterval = null;
-    let hitTimestamps = [];  // Valid pair timestamps
-    let dropDetectionTimestamps = [];  // Individual drop detections for pair matching
+    let hitTimestamps = [];  // Valid drop timestamps
     let lastHitTime = 0;
     let totalHitsDetected = 0;
-    let totalIndividualDrops = 0;
     let presenceVerified = false;
     let bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
     let bandHistory = { notch: [], guardLo: [], guardHi: [] };  // Rolling window for baseline
@@ -798,6 +784,12 @@
       
       const pinkNoiseOnly = document.getElementById('pinkNoiseOnly').checked;
       
+      console.log('✅ TX INITIALIZED: Audio context ready, bed buffer loaded');
+      console.log(`  ├─ Sample rate: ${audioContext.sampleRate}Hz`);
+      console.log(`  ├─ Buffer duration: ${bedBuffer.duration.toFixed(1)}s`);
+      console.log(`  ├─ Drop frequency: ${peakingEQ.frequency.value}Hz, Q: ${peakingEQ.Q.value.toFixed(2)}`);
+      console.log(`  └─ Pink noise mode: ${pinkNoiseOnly ? 'YES (no drops)' : 'NO (drops enabled)'}`);
+      
       if (pinkNoiseOnly) {
         document.getElementById('txStatus').textContent = 'Running (Pink Noise Only - No Drops)';
         document.getElementById('nextDropCountdown').textContent = 'N/A (No Drops Mode)';
@@ -816,8 +808,6 @@
       const now = audioContext.currentTime;
       const repeatS = parseFloat(document.getElementById('repeatEvery').value);
       const jitterS = parseFloat(document.getElementById('jitter').value);
-      const pairSpacingMs = parseFloat(document.getElementById('pairSpacing').value);
-      const pairSpacingS = pairSpacingMs / 1000;
       const maskingOn = document.getElementById('maskingOn').checked;
       
       let targetTime = now + repeatS + randomJitter(jitterS);
@@ -835,38 +825,21 @@
       const dropLenS = dropLenMs / 1000;
       const fadeInS = fadeInMs / 1000;
       const fadeOutS = fadeOutMs / 1000;
-      const totalDropDuration = dropLenS;
       
       if (maskingOn && candidateFrames.length > 0) {
         const bedStartTime = bedSource._startTime || 0;
         const relativeTarget = targetTime - now + (now - bedStartTime);
         
-        // Find candidate that can fit BOTH drops
+        // Find nearest candidate frame
         let bestCandidate = null;
         let bestDiff = Infinity;
         const maxSearch = repeatS + jitterS * 2;
-        const pairTotalDuration = pairSpacingS + totalDropDuration; // Time from drop 1 start to drop 2 end
         
         for (const frame of candidateFrames) {
           const diff = Math.abs(frame.time - relativeTarget);
           if (diff < bestDiff && frame.time >= relativeTarget && diff < maxSearch) {
-            // Check if there's enough masking coverage for both drops
-            const firstDropTime = frame.time;
-            const secondDropTime = firstDropTime + pairSpacingS;
-            
-            // Verify second drop also has masking
-            let secondHasMasking = false;
-            for (const f of candidateFrames) {
-              if (Math.abs(f.time - secondDropTime) < 0.2) {
-                secondHasMasking = true;
-                break;
-              }
-            }
-            
-            if (secondHasMasking || candidateFrames.length < 10) {
-              bestDiff = diff;
-              bestCandidate = frame;
-            }
+            bestDiff = diff;
+            bestCandidate = frame;
           }
         }
         
@@ -875,7 +848,7 @@
           maskingRms = bestCandidate.rms;
           document.getElementById('lastMaskingRms').textContent = maskingRms.toFixed(2) + ' dBFS';
         } else {
-          console.warn('No masking candidate found for pair, using target time');
+          console.warn('No masking candidate found, using target time');
           document.getElementById('lastMaskingRms').textContent = 'No masking found';
         }
       }
@@ -885,37 +858,26 @@
       const holdTime = Math.max(0, dropLenS - fadeInS - fadeOutS);
       const gain = peakingEQ.gain;
       
-      // Calculate second drop time BEFORE logging
-      const secondDropTime = actualTime + pairSpacingS;
-      
       // Log encoder parameters
-      console.log(`🔊 ENCODER: Scheduling drop pair at t=${actualTime.toFixed(3)}s`);
+      console.log(`🔊 ENCODER: Scheduling drop at t=${actualTime.toFixed(3)}s`);
       console.log(`  ├─ Frequency: ${peakingEQ.frequency.value.toFixed(0)} Hz, Q: ${peakingEQ.Q.value.toFixed(2)}`);
       console.log(`  ├─ Depth: ${dropDepth.toFixed(2)} dB (linear gain: ${dbToLinear(dropDepth).toFixed(4)})`);
       console.log(`  ├─ Duration: ${dropLenMs}ms (fadeIn: ${fadeInMs}ms, hold: ${(holdTime*1000).toFixed(0)}ms, fadeOut: ${fadeOutMs}ms)`);
-      console.log(`  └─ Pair spacing: ${pairSpacingMs}ms (second drop at t=${secondDropTime.toFixed(3)}s)`);
+      console.log(`  └─ Schedule: start=${actualTime.toFixed(3)}s, peak=${(actualTime + fadeInS).toFixed(3)}s, end=${(actualTime + fadeInS + holdTime + fadeOutS).toFixed(3)}s`);
       
-      // Schedule FIRST drop
+      // Schedule drop
       gain.setValueAtTime(0, actualTime);
       gain.linearRampToValueAtTime(dropDepth, actualTime + fadeInS);
       gain.setValueAtTime(dropDepth, actualTime + fadeInS + holdTime);
       gain.linearRampToValueAtTime(0, actualTime + fadeInS + holdTime + fadeOutS);
       
-      console.log(`  📍 Drop 1: ${actualTime.toFixed(3)}s → ${(actualTime + fadeInS).toFixed(3)}s [ramp to ${dropDepth}dB] → ${(actualTime + fadeInS + holdTime + fadeOutS).toFixed(3)}s [back to 0dB]`);
-      
-      // Schedule SECOND drop (offset by pair spacing)
-      gain.setValueAtTime(0, secondDropTime);
-      gain.linearRampToValueAtTime(dropDepth, secondDropTime + fadeInS);
-      gain.setValueAtTime(dropDepth, secondDropTime + fadeInS + holdTime);
-      gain.linearRampToValueAtTime(0, secondDropTime + fadeInS + holdTime + fadeOutS);
-      
-      console.log(`  📍 Drop 2: ${secondDropTime.toFixed(3)}s → ${(secondDropTime + fadeInS).toFixed(3)}s [ramp to ${dropDepth}dB] → ${(secondDropTime + fadeInS + holdTime + fadeOutS).toFixed(3)}s [back to 0dB]`);
+      console.log(`  ✅ Drop scheduled: ${actualTime.toFixed(3)}s → ${(actualTime + fadeInS).toFixed(3)}s [ramp to ${dropDepth}dB] → ${(actualTime + fadeInS + holdTime + fadeOutS).toFixed(3)}s [back to 0dB]`);
       
       totalDropsScheduled++;
       document.getElementById('totalDrops').textContent = totalDropsScheduled;
       document.getElementById('lastScheduled').textContent = new Date().toLocaleTimeString();
       
-      // Schedule next pair
+      // Schedule next drop
       const delay = (repeatS + randomJitter(jitterS)) * 1000;
       dropScheduleTimer = setTimeout(() => scheduleNextDrop(), delay);
     }
@@ -966,13 +928,12 @@
       // TX defaults
       document.getElementById('dropCenter').value = 8000;
       document.getElementById('dropBw').value = 600;
-      document.getElementById('dropDepth').value = -2.0;
-      document.getElementById('dropLen').value = 160;
+      document.getElementById('dropDepth').value = -3.5;
+      document.getElementById('dropLen').value = 200;
       document.getElementById('fadeIn').value = 12;
       document.getElementById('fadeOut').value = 12;
       document.getElementById('repeatEvery').value = 10;
       document.getElementById('jitter').value = 2;
-      document.getElementById('pairSpacing').value = 300;
       document.getElementById('maskingOn').checked = true;
       document.getElementById('maskWin').value = 50;
       document.getElementById('maskHop').value = 25;
@@ -986,12 +947,10 @@
       document.getElementById('guardLoHigh').value = 7600;
       document.getElementById('guardHiLow').value = 8400;
       document.getElementById('guardHiHigh').value = 9000;
-      document.getElementById('ratioThreshold').value = 2.5;
+      document.getElementById('ratioThreshold').value = 1.5;
       document.getElementById('hitsRequired').value = 2;
       document.getElementById('windowS').value = 12;
       document.getElementById('minInterHit').value = 0.5;
-      document.getElementById('expectedPairSpacing').value = 300;
-      document.getElementById('pairTolerance').value = 40;
       
       alert('Smoke test defaults loaded! Click Start TX to begin.');
     }
@@ -1038,14 +997,30 @@
       
       // Reset detection state
       hitTimestamps = [];
-      dropDetectionTimestamps = [];
       lastHitTime = 0;
       lastDropDetectionTime = 0;
       totalHitsDetected = 0;
-      totalIndividualDrops = 0;
       bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
       bandHistory = { notch: [], guardLo: [], guardHi: [] };
       dropFrameCount = 0;
+      
+      // Get parameters for logging
+      const notchLow = parseFloat(document.getElementById('notchLow').value);
+      const notchHigh = parseFloat(document.getElementById('notchHigh').value);
+      const guardLoLow = parseFloat(document.getElementById('guardLoLow').value);
+      const guardLoHigh = parseFloat(document.getElementById('guardLoHigh').value);
+      const guardHiLow = parseFloat(document.getElementById('guardHiLow').value);
+      const guardHiHigh = parseFloat(document.getElementById('guardHiHigh').value);
+      const ratioThreshold = parseFloat(document.getElementById('ratioThreshold').value);
+      const hitsRequired = parseInt(document.getElementById('hitsRequired').value);
+      const minInterHit = parseFloat(document.getElementById('minInterHit').value);
+      
+      console.log('✅ RX INITIALIZED: Microphone active, starting detection');
+      console.log(`  ├─ Sample rate: ${audioContext.sampleRate}Hz`);
+      console.log(`  ├─ FFT size: ${analyser.fftSize}`);
+      console.log(`  ├─ Notch band: ${notchLow}-${notchHigh}Hz`);
+      console.log(`  ├─ Guard bands: ${guardLoLow}-${guardLoHigh}Hz, ${guardHiLow}-${guardHiHigh}Hz`);
+      console.log(`  └─ Detection: ratio>${ratioThreshold}dB, hits=${hitsRequired}, spacing>${minInterHit}s`);
       
       // Start detection loop
       rxInterval = setInterval(detectDrop, 120);
@@ -1131,8 +1106,8 @@
         const guardStableThreshold = 2.0;  // dB tolerance - stricter
         const minAbsoluteRatio = 2.0;  // Minimum absolute ratio even with baseline check
         
-        // Log detection analysis every 2 seconds or when dropFrameCount increases
-        const shouldLog = (Math.floor(now * 0.5) !== Math.floor((now - 0.064) * 0.5)) || dropFrameCount === 1;
+        // Log detection analysis every 2 seconds
+        const shouldLog = (Math.floor(now * 0.5) !== Math.floor((now - 0.120) * 0.5));
         
         if (shouldLog && bandHistory.notch.length >= 20) {
           console.log(`🎯 RX ANALYSIS @ t=${now.toFixed(3)}s:`);
@@ -1140,7 +1115,8 @@
           console.log(`  ├─ GuardLo: ${guardLoPower.toFixed(2)}dB (baseline: ${guardLoMedian.toFixed(2)}dB, drift: ${guardLoStable.toFixed(2)}dB) ${guardLoStable <= guardStableThreshold ? '✓' : '✗'}`);
           console.log(`  ├─ GuardHi: ${guardHiPower.toFixed(2)}dB (baseline: ${guardHiMedian.toFixed(2)}dB, drift: ${guardHiStable.toFixed(2)}dB) ${guardHiStable <= guardStableThreshold ? '✓' : '✗'}`);
           console.log(`  ├─ Ratio: ${ratio.toFixed(2)}dB (threshold: ${ratioThreshold}dB) ${ratio >= ratioThreshold ? '✓' : '✗'}`);
-          console.log(`  └─ Frame count: ${dropFrameCount}/2 frames`);
+          console.log(`  ├─ Frame count: ${dropFrameCount}/2 frames`);
+          console.log(`  └─ Drops detected so far: ${totalHitsDetected} (need ${hitsRequired} for verification)`);
         }
         
         if (notchDrop >= notchDropThreshold && 
@@ -1171,34 +1147,26 @@
         const timeSinceLastDrop = now - lastDropDetectionTime;
         
         if (timeSinceLastDrop >= cooldownPeriod) {
-          // Individual drop detected - add to detection history
-          dropDetectionTimestamps.push(now);
+          // Drop detected - register as valid hit if spacing is good
           lastDropDetectionTime = now;
-          totalIndividualDrops++;
           dropFrameCount = 0;  // Reset after registering drop
           
-          // Log spacing from previous drop for debugging
-          if (dropDetectionTimestamps.length >= 2) {
-            const prevDrop = dropDetectionTimestamps[dropDetectionTimestamps.length - 2];
-            const actualSpacing = (now - prevDrop) * 1000;
-            console.log(`Drop #${totalIndividualDrops} detected. Spacing from prev: ${actualSpacing.toFixed(1)}ms`);
-          } else {
-            console.log(`Drop #${totalIndividualDrops} detected (first drop)`);
-          }
+          // Check spacing from last hit
+          const timeSinceLastHit = now - lastHitTime;
           
-          document.getElementById('individualDrops').textContent = totalIndividualDrops;
-          
-          // Check if this drop completes a valid pair
-          if (checkForPairPattern(now)) {
-            // Valid pair found!
+          if (timeSinceLastHit >= minInterHit) {
+            // Valid drop with good spacing
             hitTimestamps.push(now);
             lastHitTime = now;
             totalHitsDetected++;
             
             document.getElementById('lastHitTime').textContent = new Date().toLocaleTimeString();
             document.getElementById('totalHits').textContent = totalHitsDetected;
+            document.getElementById('individualDrops').textContent = totalHitsDetected;
             
-            console.log('Valid PAIR detected! Second drop at', now.toFixed(3), 'matched with earlier drop. Ratio:', ratio.toFixed(2), 'dB');
+            console.log(`✅ VALID DROP #${totalHitsDetected} detected at t=${now.toFixed(3)}s. Ratio: ${ratio.toFixed(2)}dB, Spacing: ${(timeSinceLastHit).toFixed(2)}s`);
+          } else {
+            console.log(`Drop detected but too close to previous (${(timeSinceLastHit).toFixed(2)}s < ${minInterHit}s) - ignoring`);
           }
         } else {
           // Drop detected but still in cooldown period - ignore
@@ -1206,10 +1174,6 @@
           console.log(`Drop detected but in cooldown (${cooldownRemaining}ms remaining) - ignoring`);
         }
       }
-      
-      // Clean old individual drop detections (keep last 15 seconds)
-      const cutoffTime = now - 15;
-      dropDetectionTimestamps = dropDetectionTimestamps.filter(t => t > cutoffTime);
       
       // Clean old valid pairs
       const windowS = parseFloat(document.getElementById('windowS').value);
@@ -1253,41 +1217,6 @@
       }
       return sorted[mid];
     }
-    
-    function checkForPairPattern(newDropTime) {
-      const expectedSpacingMs = parseFloat(document.getElementById('expectedPairSpacing').value);
-      const toleranceMs = parseFloat(document.getElementById('pairTolerance').value);
-      
-      const expectedSpacingS = expectedSpacingMs / 1000;
-      const toleranceS = toleranceMs / 1000;
-      
-      console.log(`Checking for pair. Expected: ${expectedSpacingMs}ms ±${toleranceMs}ms. Have ${dropDetectionTimestamps.length} drops in history.`);
-      
-      // Look backwards through recent detections for a matching first drop
-      for (let i = dropDetectionTimestamps.length - 2; i >= 0; i--) {
-        const firstDropTime = dropDetectionTimestamps[i];
-        const spacing = newDropTime - firstDropTime;
-        const spacingMs = spacing * 1000;
-        const delta = Math.abs(spacing - expectedSpacingS) * 1000;
-        
-        console.log(`  Checking drop at index ${i}: spacing=${spacingMs.toFixed(1)}ms, delta=${delta.toFixed(1)}ms`);
-        
-        // Check if spacing matches expected pair spacing within tolerance
-        if (Math.abs(spacing - expectedSpacingS) <= toleranceS) {
-          console.log(`✓ PAIR MATCH! Spacing: ${spacingMs.toFixed(1)}ms is within ${expectedSpacingMs}ms ±${toleranceMs}ms`);
-          return true;
-        }
-        
-        // Stop looking if we're beyond possible match range
-        if (newDropTime - firstDropTime > expectedSpacingS + 1.0) {
-          console.log(`  Stopping search (too far back)`);
-          break;
-        }
-      }
-      
-      console.log(`✗ No pair match found`);
-      return false;
-    }
 
     function stopRX() {
       if (!rxRunning) return;
@@ -1318,11 +1247,9 @@
 
     function resetRX() {
       hitTimestamps = [];
-      dropDetectionTimestamps = [];
       lastHitTime = 0;
       lastDropDetectionTime = 0;
       totalHitsDetected = 0;
-      totalIndividualDrops = 0;
       presenceVerified = false;
       bandFloors = { notch: -120, guardLo: -120, guardHi: -120 };
       bandHistory = { notch: [], guardLo: [], guardHi: [] };
