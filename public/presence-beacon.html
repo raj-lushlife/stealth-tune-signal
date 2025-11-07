@@ -1150,6 +1150,8 @@
       // Detection logic - look for TEMPORARY notch dips, not static ratios
       const ratioThreshold = parseFloat(document.getElementById('ratioThreshold').value);
       const minInterHit = parseFloat(document.getElementById('minInterHit').value);
+      const hitsRequired = parseInt(document.getElementById('hitsRequired').value);
+      const windowS = parseFloat(document.getElementById('windowS').value);
       const now = audioContext.currentTime;
       
       // Only check for drops once we have enough history
@@ -1169,9 +1171,9 @@
         const guardLoStable = Math.abs(guardLoPower - guardLoMedian);
         const guardHiStable = Math.abs(guardHiPower - guardHiMedian);
         
-        const notchDropThreshold = 2.5;  // dB below baseline - stricter to avoid noise
-        const guardStableThreshold = 2.0;  // dB tolerance - stricter
-        const minAbsoluteRatio = 2.0;  // Minimum absolute ratio even with baseline check
+        const notchDropThreshold = 2.5;  // dB below baseline
+        const guardStableThreshold = 8.0;  // dB tolerance - relaxed for real-world audio
+        const minAbsoluteRatio = 1.5;  // Minimum absolute ratio
         
         // Log detection analysis every 2 seconds
         const shouldLog = (Math.floor(now * 0.5) !== Math.floor((now - 0.120) * 0.5));
@@ -1243,10 +1245,7 @@
       }
       
       // Clean old valid pairs
-      const windowS = parseFloat(document.getElementById('windowS').value);
       hitTimestamps = hitTimestamps.filter(t => (now - t) <= windowS);
-      
-      const hitsRequired = parseInt(document.getElementById('hitsRequired').value);
       document.getElementById('validPairs').textContent = hitTimestamps.length;
       document.getElementById('hitsReq').textContent = hitsRequired;
       
