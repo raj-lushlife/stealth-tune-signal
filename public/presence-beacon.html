@@ -1628,18 +1628,26 @@
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          // STRICT THRESHOLDS - ALL MUST PASS
+          // STRICT THRESHOLDS - ALL MUST PASS + ACTIVITY GATE
           const zScoreThreshold = 3.2;
           const psrThreshold = 10.0;
-          const requiredConsecutiveHits = 1;
+          const requiredConsecutiveHits = 3; // require multiple consecutive frames to confirm
           const minCorrThreshold = 0.40;
+          const minDeltaActivity = 1.0; // dB avg |Δ| across last code window
           
           const passedZScore = zScore >= zScoreThreshold;
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
           const passedMinCorr = correlation >= minCorrThreshold;
           
-          // ALL THREE MUST PASS - no bypasses, no shortcuts
-          const detectionMade = passedZScore && passedPSR && passedMinCorr && !cooldownActive;
+          // Compute differential activity over the last code window to reject silence/idle
+          const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
+          const deltaActivity = recentDeltas.length
+            ? recentDeltas.reduce((sum, v) => sum + Math.abs(v), 0) / recentDeltas.length
+            : 0;
+          const passedActivity = deltaActivity >= minDeltaActivity;
+          
+          // ALL CONDITIONS MUST PASS - no bypasses
+          const detectionMade = passedZScore && passedPSR && passedMinCorr && passedActivity && !cooldownActive;
           
           // Log significant detections
           if (zScore > 2.0 || correlation > 0.20 || peakToSidelobeRatio > 5.0) {
@@ -1648,7 +1656,8 @@
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (need ≥${zScoreThreshold})`);
             console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (need ≥${minCorrThreshold})`);
             console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (need ≥${psrThreshold} dB)`);
-            console.log(`  ├─ All pass: ${passedZScore && passedPSR && passedMinCorr ? '✅ YES' : '❌ NO'}`);
+            console.log(`  ├─ Activity: ${deltaActivity.toFixed(2)} dB ${passedActivity ? '✅' : '❌'} (need ≥${minDeltaActivity} dB)`);
+            console.log(`  ├─ All pass: ${passedZScore && passedPSR && passedMinCorr && passedActivity ? '✅ YES' : '❌ NO'}`);
             console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ ${cooldownRemaining}s` : '✅ clear'}`);
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
@@ -1925,8 +1934,8 @@
       document.getElementById('validPairs').textContent = hitTimestamps.length;
       document.getElementById('hitsReq').textContent = hitsRequired;
       
-      // Check verification
-      if (hitTimestamps.length >= hitsRequired && !presenceVerified) {
+      // Check verification (only in LEGACY mode)
+      if (currentMode === 'legacy' && hitTimestamps.length >= hitsRequired && !presenceVerified) {
         presenceVerified = true;
         const badge = document.getElementById('presenceBadge');
         badge.textContent = '✅ Presence Verified!';
