@@ -593,6 +593,8 @@
       const buffer = audioContext.createBuffer(1, length, sampleRate);
       const output = buffer.getChannelData(0);
       
+      console.log(`🎵 PINK NOISE: Generating ${duration}s (${length.toLocaleString()} samples @ ${sampleRate}Hz)`);
+      
       let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
       for (let i = 0; i < length; i++) {
         const white = Math.random() * 2 - 1;
@@ -610,6 +612,15 @@
       for (let i = 0; i < length; i++) {
         output[i] *= 0.15;
       }
+      
+      // Calculate and log RMS level
+      let sumSq = 0;
+      for (let i = 0; i < length; i++) {
+        sumSq += output[i] * output[i];
+      }
+      const rms = Math.sqrt(sumSq / length);
+      const rmsDb = linearToDb(rms);
+      console.log(`  └─ Generated RMS: ${rms.toFixed(6)} (${rmsDb.toFixed(2)} dBFS)`);
       
       return buffer;
     }
@@ -757,6 +768,33 @@
       
       bedSource.start(0);
       
+      // Start real-time gain monitor
+      let gainMonitorInterval;
+      const startMonitoring = () => {
+        gainMonitorInterval = setInterval(() => {
+          if (peakingEQ && txRunning) {
+            const currentGain = peakingEQ.gain.value;
+            const currentTime = audioContext.currentTime;
+            // Only log if gain is non-zero (during a drop)
+            if (Math.abs(currentGain) > 0.01) {
+              console.log(`⚡ GAIN MONITOR @ t=${currentTime.toFixed(3)}s: ${currentGain.toFixed(3)}dB (linear: ${dbToLinear(currentGain).toFixed(4)})`);
+            }
+          }
+        }, 50); // Check every 50ms
+      };
+      
+      startMonitoring();
+      
+      // Clean up monitor on stop
+      const originalStopTX = stopTX;
+      stopTX = function() {
+        if (gainMonitorInterval) {
+          clearInterval(gainMonitorInterval);
+          gainMonitorInterval = null;
+        }
+        originalStopTX();
+      };
+      
       const pinkNoiseOnly = document.getElementById('pinkNoiseOnly').checked;
       
       if (pinkNoiseOnly) {
@@ -846,11 +884,20 @@
       const holdTime = Math.max(0, dropLenS - fadeInS - fadeOutS);
       const gain = peakingEQ.gain;
       
+      // Log encoder parameters
+      console.log(`🔊 ENCODER: Scheduling drop pair at t=${actualTime.toFixed(3)}s`);
+      console.log(`  ├─ Frequency: ${peakingEQ.frequency.value.toFixed(0)} Hz, Q: ${peakingEQ.Q.value.toFixed(2)}`);
+      console.log(`  ├─ Depth: ${dropDepth.toFixed(2)} dB (linear gain: ${dbToLinear(dropDepth).toFixed(4)})`);
+      console.log(`  ├─ Duration: ${dropLenMs}ms (fadeIn: ${fadeInMs}ms, hold: ${(holdTime*1000).toFixed(0)}ms, fadeOut: ${fadeOutMs}ms)`);
+      console.log(`  └─ Pair spacing: ${pairSpacingMs}ms (second drop at t=${secondDropTime.toFixed(3)}s)`);
+      
       // Schedule FIRST drop
       gain.setValueAtTime(0, actualTime);
       gain.linearRampToValueAtTime(dropDepth, actualTime + fadeInS);
       gain.setValueAtTime(dropDepth, actualTime + fadeInS + holdTime);
       gain.linearRampToValueAtTime(0, actualTime + fadeInS + holdTime + fadeOutS);
+      
+      console.log(`  📍 Drop 1: ${actualTime.toFixed(3)}s → ${(actualTime + fadeInS).toFixed(3)}s [ramp to ${dropDepth}dB] → ${(actualTime + fadeInS + holdTime + fadeOutS).toFixed(3)}s [back to 0dB]`);
       
       // Schedule SECOND drop (offset by pair spacing)
       const secondDropTime = actualTime + pairSpacingS;
@@ -858,6 +905,8 @@
       gain.linearRampToValueAtTime(dropDepth, secondDropTime + fadeInS);
       gain.setValueAtTime(dropDepth, secondDropTime + fadeInS + holdTime);
       gain.linearRampToValueAtTime(0, secondDropTime + fadeInS + holdTime + fadeOutS);
+      
+      console.log(`  📍 Drop 2: ${secondDropTime.toFixed(3)}s → ${(secondDropTime + fadeInS).toFixed(3)}s [ramp to ${dropDepth}dB] → ${(secondDropTime + fadeInS + holdTime + fadeOutS).toFixed(3)}s [back to 0dB]`);
       
       totalDropsScheduled++;
       document.getElementById('totalDrops').textContent = totalDropsScheduled;
@@ -1079,6 +1128,18 @@
         const guardStableThreshold = 2.0;  // dB tolerance - stricter
         const minAbsoluteRatio = 2.0;  // Minimum absolute ratio even with baseline check
         
+        // Log detection analysis every 2 seconds or when dropFrameCount increases
+        const shouldLog = (Math.floor(now * 0.5) !== Math.floor((now - 0.064) * 0.5)) || dropFrameCount === 1;
+        
+        if (shouldLog && bandHistory.notch.length >= 20) {
+          console.log(`🎯 RX ANALYSIS @ t=${now.toFixed(3)}s:`);
+          console.log(`  ├─ Notch: ${notchPower.toFixed(2)}dB (baseline: ${notchMedian.toFixed(2)}dB, drop: ${notchDrop.toFixed(2)}dB) ${notchDrop >= notchDropThreshold ? '✓' : '✗'}`);
+          console.log(`  ├─ GuardLo: ${guardLoPower.toFixed(2)}dB (baseline: ${guardLoMedian.toFixed(2)}dB, drift: ${guardLoStable.toFixed(2)}dB) ${guardLoStable <= guardStableThreshold ? '✓' : '✗'}`);
+          console.log(`  ├─ GuardHi: ${guardHiPower.toFixed(2)}dB (baseline: ${guardHiMedian.toFixed(2)}dB, drift: ${guardHiStable.toFixed(2)}dB) ${guardHiStable <= guardStableThreshold ? '✓' : '✗'}`);
+          console.log(`  ├─ Ratio: ${ratio.toFixed(2)}dB (threshold: ${ratioThreshold}dB) ${ratio >= ratioThreshold ? '✓' : '✗'}`);
+          console.log(`  └─ Frame count: ${dropFrameCount}/2 frames`);
+        }
+        
         if (notchDrop >= notchDropThreshold && 
             guardLoStable <= guardStableThreshold &&
             guardHiStable <= guardStableThreshold &&
@@ -1086,9 +1147,12 @@
             ratio >= minAbsoluteRatio) {  // Additional absolute threshold
           dropFrameCount++;
           
+          console.log(`  ✓ Pattern match! dropFrameCount=${dropFrameCount}`);
+          
           // Require pattern for 2-3 consecutive frames to reduce false positives
           if (dropFrameCount >= 2 && (now - lastHitTime) >= minInterHit) {
             dropDetected = true;
+            console.log(`  🎉 DROP DETECTED after ${dropFrameCount} consecutive frames`);
           }
         } else {
           // Allow one frame gap before resetting
