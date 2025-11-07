@@ -948,16 +948,17 @@
       const freqB = centerFreq + binSpacing / 2;
       
       // Create two narrow peaking filters for bins A and B
+      // Q=30 gives ~400Hz bandwidth at 12kHz - narrow enough to separate, wide enough for energy
       const filterA = audioContext.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 1000; // Ultra-narrow to minimize overlap (~12 Hz BW at 12kHz)
+      filterA.Q.value = 30;
       filterA.gain.value = 0;
       
       const filterB = audioContext.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 1000; // Ultra-narrow to minimize overlap (~12 Hz BW at 12kHz)
+      filterB.Q.value = 30;
       filterB.gain.value = 0;
       
       spectralFilters = { binA: filterA, binB: filterB };
@@ -972,10 +973,34 @@
       
       bedSource.start(0);
       
+      // DIAGNOSTIC: Add output level meter to verify TX is working
+      const outputAnalyser = audioContext.createAnalyser();
+      outputAnalyser.fftSize = 256;
+      masterGain.connect(outputAnalyser);
+      
+      // Monitor output level
+      const checkOutputLevel = () => {
+        if (!txRunning) return;
+        const dataArray = new Uint8Array(outputAnalyser.frequencyBinCount);
+        outputAnalyser.getByteTimeDomainData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const val = (dataArray[i] - 128) / 128;
+          sum += val * val;
+        }
+        const rms = Math.sqrt(sum / dataArray.length);
+        const dbFS = 20 * Math.log10(rms || 0.0001);
+        console.log(`🔊 TX OUTPUT LEVEL: ${dbFS.toFixed(1)} dBFS (should be > -30 dBFS to be audible)`);
+        setTimeout(checkOutputLevel, 2000);
+      };
+      checkOutputLevel();
+      
       console.log('✅ SPECTRAL BEACON TX INITIALIZED');
       console.log(`  ├─ Frequency A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
-      console.log(`  ├─ Symbol gain: ±${symbolGain}dB`);
+      console.log(`  ├─ Symbol gain: ±${symbolGain}dB, Q: 30 (BW ~${(freqA/30).toFixed(0)}Hz)`);
+      console.log(`  ├─ Output gain: ${outputGainDb}dB (master volume: ${masterGain.gain.value.toFixed(3)})`);
       console.log(`  └─ Code length: ${PN31_CODE.length} symbols`);
+      console.log(`  └─ LISTEN for encoding: should hear subtle high-frequency modulation`);
       
       document.getElementById('txStatus').textContent = 'Transmitting Spectral Beacon';
       
@@ -1427,10 +1452,14 @@
       const frameCount = spectralSymbolBuffer.length;
       if (frameCount % 10 === 0) {
         console.log(`🎯 SPECTRAL RX @ frame ${frameCount}:`);
-        console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz`);
+        console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz, BW: 20Hz`);
         console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB, Δ: ${delta.toFixed(2)}dB`);
         console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, Veto: ${loudnessVeto}`);
         console.log(`  └─ Buffer size: ${spectralSymbolBuffer.length}/${PN31_CODE.length}`);
+        
+        if (Math.abs(delta) < 0.5) {
+          console.warn(`⚠️ RX ISSUE: Delta too small (${delta.toFixed(2)}dB). TX may not be running or gain too low!`);
+        }
       }
       
       if (!loudnessVeto) {
