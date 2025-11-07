@@ -1664,6 +1664,16 @@
             baselineCalibrationSamples.push(correlation);
             baselineBroadbandSamples.push(broadbandPower);
             
+            // Also collect energy and guard baseline samples
+            if (!window.baselineEnergySamples) window.baselineEnergySamples = [];
+            if (!window.baselineGuardLoSamples) window.baselineGuardLoSamples = [];
+            if (!window.baselineGuardHiSamples) window.baselineGuardHiSamples = [];
+            
+            const currentEnergySum = linearToDb(powerA + powerB);
+            window.baselineEnergySamples.push(currentEnergySum);
+            window.baselineGuardLoSamples.push(powerGuardLo);
+            window.baselineGuardHiSamples.push(powerGuardHi);
+            
             if (baselineCalibrationSamples.length >= 70) {
               // Compute baseline statistics
               baselineCorrelationMean = baselineCalibrationSamples.reduce((a,b) => a+b, 0) / baselineCalibrationSamples.length;
@@ -1674,6 +1684,11 @@
               baselineBroadbandMean = baselineBroadbandSamples.reduce((a,b) => a+b, 0) / baselineBroadbandSamples.length;
               const bbVar = baselineBroadbandSamples.reduce((a,b) => a + Math.pow(b - baselineBroadbandMean, 2), 0) / baselineBroadbandSamples.length;
               baselineBroadbandStdDev = Math.max(Math.sqrt(bbVar), 0.5);
+              
+              // Compute energy and guard baselines
+              baselineEnergySum = window.baselineEnergySamples.reduce((a,b) => a+b, 0) / window.baselineEnergySamples.length;
+              baselineGuardLo = window.baselineGuardLoSamples.reduce((a,b) => a+b, 0) / window.baselineGuardLoSamples.length;
+              baselineGuardHi = window.baselineGuardHiSamples.reduce((a,b) => a+b, 0) / window.baselineGuardHiSamples.length;
               
               // VALIDATION: Check if calibration makes sense
               if (baselineCorrelationMean > 0.4) {
@@ -1710,6 +1725,8 @@
               console.log(`  ├─ Noise Mean Correlation: ${baselineCorrelationMean.toFixed(3)}`);
               console.log(`  ├─ Noise StdDev: ${baselineCorrelationStdDev.toFixed(3)}`);
               console.log(`  ├─ Broadband Mean: ${baselineBroadbandMean.toFixed(1)} dB, σ: ${baselineBroadbandStdDev.toFixed(1)} dB`);
+              console.log(`  ├─ Energy Sum Baseline: ${baselineEnergySum.toFixed(1)} dB`);
+              console.log(`  ├─ Guard Lo Baseline: ${baselineGuardLo.toFixed(1)} dB, Guard Hi Baseline: ${baselineGuardHi.toFixed(1)} dB`);
               console.log(`  └─ Detection threshold: ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (mean + 5σ)`);
               console.log('✅ NOW LISTENING FOR ENCODED SIGNAL... (You can start TX now)');
             } else {
