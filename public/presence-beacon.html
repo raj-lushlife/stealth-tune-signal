@@ -1597,8 +1597,9 @@
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          const zScoreThreshold = 3.0;  // Z ≥ 3 (3σ = 99.7% confidence)
-          const psrThreshold = 7.0;     // PSR ≥ 7 dB
+          const zScoreThreshold = 4.0;  // Z ≥ 4 (balanced threshold)
+          const psrThreshold = 8.0;     // PSR ≥ 8 dB (stricter)
+          const requiredConsecutiveHits = 2; // Require 2 hits to verify
           
           const passedZScore = zScore >= zScoreThreshold;
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
@@ -1613,29 +1614,42 @@
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
           
-          // Verify presence on strong detection
+          // Verify presence on strong detection (require consecutive hits)
           if (detectionMade && !presenceVerified) {
             spectralConsecutiveHits++;
-            presenceVerified = true;
-            spectralLastVerifyTime = now;
             
-            const badge = document.getElementById('presenceBadge');
-            badge.textContent = '✅ Presence Verified!';
-            badge.classList.add('verified');
+            // Only verify after required consecutive hits
+            if (spectralConsecutiveHits >= requiredConsecutiveHits) {
+              presenceVerified = true;
+              spectralLastVerifyTime = now;
             
-            console.log(`🎉 PRESENCE VERIFIED!`);
-            console.log(`  ├─ Correlation: ${correlation.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
-            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (threshold: ${zScoreThreshold})`);
-            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB (threshold: ${psrThreshold} dB)`);
-            console.log(`  └─ 8s cooldown activated`);
+              const badge = document.getElementById('presenceBadge');
+              badge.textContent = '✅ Presence Verified!';
+              badge.classList.add('verified');
             
-            // Reset after cooldown
-            setTimeout(() => {
-              presenceVerified = false;
-              badge.textContent = '⏳ Listening...';
-              badge.classList.remove('verified');
-              console.log('🔄 Cooldown complete - ready for next detection');
-            }, 8000);
+              console.log(`🎉 PRESENCE VERIFIED!`);
+              console.log(`  ├─ Correlation: ${correlation.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
+              console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (threshold: ${zScoreThreshold})`);
+              console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB (threshold: ${psrThreshold} dB)`);
+              console.log(`  ├─ Consecutive hits: ${spectralConsecutiveHits}/${requiredConsecutiveHits}`);
+              console.log(`  └─ 8s cooldown activated`);
+              
+              // Reset after cooldown
+              setTimeout(() => {
+                presenceVerified = false;
+                const badge = document.getElementById('presenceBadge');
+                badge.textContent = '⏳ Listening...';
+                badge.classList.remove('verified');
+                console.log('🔄 Cooldown complete - ready for next detection');
+              }, 8000);
+            } else {
+              console.log(`🔄 Detection hit ${spectralConsecutiveHits}/${requiredConsecutiveHits} - need more hits to verify`);
+            }
+          } else {
+            // Reset consecutive hits on failed detection
+            if (!detectionMade && spectralConsecutiveHits > 0) {
+              spectralConsecutiveHits = 0;
+            }
           }
         }
       } else {
