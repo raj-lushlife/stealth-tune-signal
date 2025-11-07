@@ -1628,11 +1628,11 @@
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          // PERMISSIVE THRESHOLDS for encoded signals
-          const zScoreThreshold = 2.0;   // Lowered from 3.2
-          const psrThreshold = 5.0;       // Lowered from 8.0
-          const requiredConsecutiveHits = 1; // Lowered from 2
-          const minCorrThreshold = 0.15;  // Lowered from 0.20
+          // STRICT THRESHOLDS
+          const zScoreThreshold = 3.2;
+          const psrThreshold = 10.0;
+          const requiredConsecutiveHits = 1;
+          const minCorrThreshold = 0.30;
           
           const passedZScore = zScore >= zScoreThreshold;
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
