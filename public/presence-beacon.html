@@ -464,7 +464,7 @@
             </div>
             <div class="control-group">
               <label>Symbol Gain (dB):</label>
-              <input type="number" id="spectralGain" value="1.5" min="0.5" max="3" step="0.1">
+              <input type="number" id="spectralGain" value="4.0" min="0.5" max="8" step="0.5">
             </div>
           </div>
           <div class="readout">
@@ -936,13 +936,13 @@
       const filterA = audioContext.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 20; // Broader for real-world playback
+      filterA.Q.value = 8; // Much broader for better transmission
       filterA.gain.value = 0;
       
       const filterB = audioContext.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 20; // Broader for real-world playback
+      filterB.Q.value = 8; // Much broader for better transmission
       filterB.gain.value = 0;
       
       spectralFilters = { binA: filterA, binB: filterB };
@@ -1350,7 +1350,7 @@
       
       console.log('✅ SPECTRAL BEACON RX INITIALIZED');
       console.log(`  ├─ FFT size: ${analyser.fftSize}`);
-      console.log(`  └─ Detection: correlation > 0.50, Z-score > 3.0`);
+      console.log(`  └─ Detection: correlation > 0.25, Z-score > 1.5 (VERY LOOSE FOR TESTING)`);
       
       // Start detection loop
       const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
@@ -1374,10 +1374,10 @@
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
       
-      // Extract power at bins A and B (narrow band around each freq)
-      const bandwidth = Math.max(30, binSpacing); // Hz, wider for robustness
-      const powerA = computeBandPower(dataArray, binHz, freqA - bandwidth, freqA + bandwidth);
-      const powerB = computeBandPower(dataArray, binHz, freqB - bandwidth, freqB + bandwidth);
+      // Extract power at bins A and B (wider band for robustness)
+      const bandwidth = Math.max(50, binSpacing * 2); // Hz, much wider for better detection
+      const powerA = computeBandPower(dataArray, binHz, freqA - bandwidth/2, freqA + bandwidth/2);
+      const powerB = computeBandPower(dataArray, binHz, freqB - bandwidth/2, freqB + bandwidth/2);
       
       // Compute differential (in dB)
       const delta = powerB - powerA;
@@ -1449,13 +1449,13 @@
             console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
             console.log(`  ├─ Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
             console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
-            console.log(`  └─ Thresholds: corr > 0.40, z-score > 3.0, stdDev > 0.15`);
+            console.log(`  └─ Thresholds: corr > 0.25, z-score > 1.5, stdDev > 0.05 (VERY LOOSE)`);
           }
           
-          // Detection thresholds (stricter to avoid false positives from clapping/noise)
-          const corrThreshold = 0.40;  // Raised from 0.30
-          const zScoreMin = 3.0;       // Raised from 2.0
-          const minStdDev = 0.15;      // Require meaningful variation
+          // Detection thresholds (loosened for initial testing)
+          const corrThreshold = 0.25;  // Very lenient
+          const zScoreMin = 1.5;       // Very lenient
+          const minStdDev = 0.05;      // Very lenient
           
           // Check all conditions
           const passedCorr = correlation > corrThreshold;
