@@ -593,8 +593,10 @@
                 <div class="value" id="loudnessLevel">—</div>
               </div>
             </div>
-            <div class="readout">
-              <div><strong>Thresholds:</strong> Corr > 0.35, Z-score > 2.0, StdDev > 0.08, 3 consecutive</div>
+            <div class="readout" id="baselineReadout">
+              <div><strong>Status:</strong> <span id="baselineStatus">Waiting to start...</span></div>
+              <div><strong>Baseline Noise:</strong> <span id="baselineNoise">Not calibrated</span></div>
+              <div><strong>Detection Threshold:</strong> <span id="detectionThreshold">—</span></div>
             </div>
           </div>
         </div>
@@ -727,6 +729,12 @@
     let spectralCorrelationHistory = [];  // For Z-score calculation
     let spectralConsecutiveHits = 0; // Track consecutive good correlations
     let consecutiveRequired = 3; // Required consecutive detections for verification
+    
+    // Adaptive baseline calibration
+    let baselineCalibrated = false;
+    let baselineCorrelationMean = 0;
+    let baselineCorrelationStdDev = 0;
+    let baselineCalibrationSamples = [];
     // PN-31 Gold Code for spectral beacon (±1 sequence)
     const PN31_CODE = [1,-1,1,1,-1,1,-1,-1,1,1,1,-1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,1,1,1];
 
@@ -997,6 +1005,11 @@
         // symbol=-1 means A louder, B quieter
         const gainA = symbol === 1 ? -symbolGain : symbolGain;
         const gainB = symbol === 1 ? symbolGain : -symbolGain;
+        
+        // TX MONITORING: Log actual differential being transmitted
+        if (symbolIndex % 10 === 0) {
+          console.log(`📡 TX @ symbol ${symbolIndex}: code[${codeIndex}]=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB, Δ=${(gainB - gainA).toFixed(1)}dB`);
+        }
         
         // Schedule smooth transitions
         spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
@@ -1354,9 +1367,18 @@
       spectralConsecutiveHits = 0; // Track consecutive good correlations
       presenceVerified = false;
       
-      console.log('✅ SPECTRAL BEACON RX INITIALIZED');
+      // Reset baseline calibration
+      baselineCalibrated = false;
+      baselineCalibrationSamples = [];
+      
+      // Update UI
+      document.getElementById('baselineStatus').textContent = 'Calibrating baseline (5 sec)...';
+      document.getElementById('baselineNoise').textContent = 'Measuring...';
+      document.getElementById('detectionThreshold').textContent = 'Computing...';
+      
+      console.log('✅ SPECTRAL BEACON RX INITIALIZED - CALIBRATING BASELINE...');
       console.log(`  ├─ FFT size: ${analyser.fftSize}`);
-      console.log(`  └─ Detection: corr > 0.35, z-score > 2.0, 3 consecutive hits (noise rejection)`);
+      console.log(`  └─ Calibrating noise baseline for 5 seconds before detection...`);
       
       // Start detection loop
       const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
@@ -1433,6 +1455,45 @@
           }
           const correlation = best.corr;
           
+          // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
+          if (!baselineCalibrated) {
+            baselineCalibrationSamples.push(correlation);
+            
+            if (baselineCalibrationSamples.length >= 70) {
+              // Compute baseline statistics
+              baselineCorrelationMean = baselineCalibrationSamples.reduce((a,b) => a+b, 0) / baselineCalibrationSamples.length;
+              const variance = baselineCalibrationSamples.reduce((a,b) => a + Math.pow(b - baselineCorrelationMean, 2), 0) / baselineCalibrationSamples.length;
+              baselineCorrelationStdDev = Math.sqrt(variance);
+              baselineCalibrated = true;
+              
+              // Update UI
+              document.getElementById('baselineStatus').textContent = 'Calibrated - Listening for signal';
+              document.getElementById('baselineNoise').textContent = `Mean: ${baselineCorrelationMean.toFixed(3)}, σ: ${baselineCorrelationStdDev.toFixed(3)}`;
+              document.getElementById('detectionThreshold').textContent = `Corr > ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (5σ)`;
+              
+              console.log('🎯 BASELINE CALIBRATION COMPLETE:');
+              console.log(`  ├─ Noise Mean Correlation: ${baselineCorrelationMean.toFixed(3)}`);
+              console.log(`  ├─ Noise StdDev: ${baselineCorrelationStdDev.toFixed(3)}`);
+              console.log(`  └─ Detection threshold: ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (mean + 5σ)`);
+              console.log('✅ NOW LISTENING FOR ENCODED SIGNAL...');
+            } else {
+              // Show calibration progress
+              if (baselineCalibrationSamples.length % 10 === 0) {
+                console.log(`📊 Calibrating... ${baselineCalibrationSamples.length}/70 samples (corr: ${correlation.toFixed(3)})`);
+              }
+              
+              // Update UI during calibration
+              document.getElementById('baselineStatus').textContent = `Calibrating... ${baselineCalibrationSamples.length}/70`;
+            }
+            
+            // Update display during calibration
+            document.getElementById('corrPeak').textContent = `${correlation.toFixed(3)} (cal)`;
+            document.getElementById('corrZScore').textContent = `${baselineCalibrationSamples.length}/70`;
+            document.getElementById('consecutiveHits').textContent = 'calibrating...';
+            return; // Don't detect during calibration
+          }
+          
+          // NORMAL DETECTION (after calibration)
           // Update correlation history for Z-score
           spectralCorrelationHistory.push(correlation);
           if (spectralCorrelationHistory.length > 100) {
@@ -1454,18 +1515,19 @@
           if (spectralSymbolBuffer.length === codeLen || frameCount % codeLen === 0) {
             console.log(`📊 CORRELATION COMPUTED:`);
             console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
-            console.log(`  ├─ Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
+            console.log(`  ├─ Baseline: mean=${baselineCorrelationMean.toFixed(3)}, σ=${baselineCorrelationStdDev.toFixed(3)}`);
+            console.log(`  ├─ Current: mean=${mean.toFixed(3)}, σ=${stdDev.toFixed(3)}, z-score=${zScore.toFixed(2)}`);
             console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
-            console.log(`  └─ Thresholds: corr > 0.35, z > 2.0, stdDev > 0.08, 3 consecutive`);
+            console.log(`  └─ Adaptive threshold: corr > ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (baseline + 5σ)`);
           }
           
-          // Detection thresholds (balanced for real signal vs noise)
-          const corrThreshold = 0.35;  // Higher than noise floor
-          const zScoreMin = 2.0;       // Require statistical significance
-          const minStdDev = 0.08;      // Meaningful variation
+          // ADAPTIVE DETECTION THRESHOLDS
+          const adaptiveThreshold = baselineCorrelationMean + 5 * baselineCorrelationStdDev; // 5-sigma above noise
+          const zScoreMin = 3.0;       // Strong z-score requirement
+          const minStdDev = baselineCorrelationStdDev * 1.5; // At least 1.5x baseline variation
           
           // Check all conditions
-          const passedCorr = correlation > corrThreshold;
+          const passedCorr = correlation > adaptiveThreshold;
           const passedZScore = zScore > zScoreMin;
           const passedStdDev = stdDev > minStdDev;
           const singleFramePassed = passedCorr && passedZScore && passedStdDev;
@@ -1478,15 +1540,15 @@
           }
           
           // Log detection result
-          if (correlation > 0.20) {  // Log near-misses for debugging
+          if (correlation > baselineCorrelationMean + 2 * baselineCorrelationStdDev) {  // Log anything 2σ above noise
             if (!singleFramePassed) {
-              console.log(`❌ DETECTION FAILED:`);
-              console.log(`  ├─ Correlation: ${correlation.toFixed(3)} ${passedCorr ? '✓' : '✗'} (need > ${corrThreshold})`);
+              console.log(`⚠️ WEAK SIGNAL DETECTED (not passing all thresholds):`);
+              console.log(`  ├─ Correlation: ${correlation.toFixed(3)} ${passedCorr ? '✓' : '✗'} (need > ${adaptiveThreshold.toFixed(3)})`);
               console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✓' : '✗'} (need > ${zScoreMin})`);
-              console.log(`  ├─ StdDev: ${stdDev.toFixed(3)} ${passedStdDev ? '✓' : '✗'} (need > ${minStdDev})`);
+              console.log(`  ├─ StdDev: ${stdDev.toFixed(3)} ${passedStdDev ? '✓' : '✗'} (need > ${minStdDev.toFixed(3)})`);
               console.log(`  └─ Consecutive hits: ${spectralConsecutiveHits}/${consecutiveRequired}`);
             } else {
-              console.log(`✅ SINGLE FRAME PASSED! Consecutive: ${spectralConsecutiveHits}/${consecutiveRequired}`);
+              console.log(`✅ STRONG SIGNAL! Consecutive: ${spectralConsecutiveHits}/${consecutiveRequired}`);
             }
           }
           
@@ -1788,6 +1850,14 @@
       }
       
       analyser = null;
+      
+      // Reset baseline UI
+      document.getElementById('baselineStatus').textContent = 'Stopped';
+      document.getElementById('baselineNoise').textContent = 'Not calibrated';
+      document.getElementById('detectionThreshold').textContent = '—';
+      document.getElementById('corrPeak').textContent = '—';
+      document.getElementById('corrZScore').textContent = '—';
+      document.getElementById('consecutiveHits').textContent = '0/3';
       
       document.getElementById('startRxBtn').disabled = false;
       document.getElementById('stopRxBtn').disabled = true;
