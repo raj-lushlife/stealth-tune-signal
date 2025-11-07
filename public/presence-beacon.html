@@ -1624,11 +1624,11 @@
             console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
           }
           
-          // DETECTION CRITERIA — robust against silence
+          // DETECTION CRITERIA — robust against silence but permissive for real code hits
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          // Conservative thresholds
+          // Base thresholds
           const zScoreThreshold = 3.2;
           const psrThreshold = 8.0;
           const requiredConsecutiveHits = 2;
@@ -1641,15 +1641,24 @@
           // Silence/energy gates
           const quietGate = broadbandPower < (baselineBroadbandMean + Math.max(6, 3 * baselineBroadbandStdDev));
           const maxTonePower = Math.max(powerA, powerB);
-          const toneToNoise = maxTonePower - broadbandPower;
-          const toneEnergyGateFail = (toneToNoise < 10) || (maxTonePower < baselineBroadbandMean + 8);
+          const toneToNoise = maxTonePower - broadbandPower; // may be negative with our narrowband power metric
+          // Relaxed tone gate: only enforce when PSR is weak; allow negative TN for true codes
+          const toneEnergyGateFail = (peakToSidelobeRatio < 7.0) && (toneToNoise < -2);
           
-          // Symbol dynamics gate: require FSK toggling energy
+          // Symbol dynamics: use smaller threshold; true FSK still toggles even if small
           const dynWindow = spectralSymbolBuffer.slice(-16);
           const avgAbsDelta = dynWindow.length ? dynWindow.reduce((a,b)=>a+Math.abs(b),0) / dynWindow.length : 0;
-          const deltaActivityLow = avgAbsDelta < 0.8;
+          const deltaActivityLow = avgAbsDelta < 0.25;
           
-          const detectionMade = passedZScore && passedPSR && passedMinCorr && !quietGate && !toneEnergyGateFail && !deltaActivityLow && !cooldownActive;
+          // Signature override: if the correlation "looks like the code", bypass energy/quiet gates
+          const signatureOverride = (zScore >= 5.0 && peakToSidelobeRatio >= 7.0 && correlation >= 0.35);
+          
+          const basePass = passedZScore && passedPSR && passedMinCorr;
+          const effectiveQuietFail = quietGate && !signatureOverride;
+          const effectiveToneFail = toneEnergyGateFail && !signatureOverride;
+          const effectiveDeltaLow = deltaActivityLow && !signatureOverride;
+          
+          const detectionMade = (basePass || signatureOverride) && !effectiveQuietFail && !effectiveToneFail && !effectiveDeltaLow && !cooldownActive;
           
           // Log significant detections
           if (zScore > 3.0) {
@@ -1659,8 +1668,9 @@
             console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
             console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (≥${minCorrThreshold})`);
             console.log(`  ├─ Quiet gate: ${quietGate ? '⛔ too quiet' : '✅ clear'} (broadband=${broadbandPower.toFixed(1)} dB, baseline=${baselineBroadbandMean.toFixed(1)}±${baselineBroadbandStdDev.toFixed(1)} dB)`);
-            console.log(`  ├─ Tone gate: ${toneEnergyGateFail ? '⛔ weak tone' : '✅ strong'} (tone=${maxTonePower.toFixed(1)} dB, ΔTN=${toneToNoise.toFixed(1)} dB)`);
-            console.log(`  ├─ Delta activity: ${avgAbsDelta.toFixed(2)} dB ${deltaActivityLow ? '❌' : '✅'} (≥0.8 dB)`);
+            console.log(`  ├─ Tone gate: ${toneEnergyGateFail ? '⛔ weak tone' : '✅ ok'} (tone=${maxTonePower.toFixed(1)} dB, ΔTN=${toneToNoise.toFixed(1)} dB)`);
+            console.log(`  ├─ Delta activity: ${avgAbsDelta.toFixed(2)} dB ${deltaActivityLow ? '❌' : '✅'} (≥0.25 dB)`);
+            console.log(`  ├─ Override: ${signatureOverride ? '✅ active' : '—'}`);
             console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ active (${cooldownRemaining}s remaining)` : '✅ clear'}`);
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
