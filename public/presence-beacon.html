@@ -1433,17 +1433,17 @@
     }
     
     function detectSpectralSymbol() {
-      // Debug: Log if function is called but exits early
+      // Debug: ALWAYS log if not running so user knows
       if (!rxRunning) {
-        if (Math.random() < 0.01) console.log('❌ RX: rxRunning = false');
+        if (Math.random() < 0.05) console.warn('⚠️ RX NOT RUNNING - Click "Start RX" to detect signals');
         return;
       }
       if (!analyser) {
-        if (Math.random() < 0.01) console.log('❌ RX: analyser not initialized');
+        if (Math.random() < 0.05) console.warn('⚠️ RX: analyser not initialized');
         return;
       }
       if (currentMode !== 'spectral') {
-        if (Math.random() < 0.01) console.log(`❌ RX: wrong mode (${currentMode}, expected spectral)`);
+        if (Math.random() < 0.05) console.warn(`⚠️ RX: wrong mode (${currentMode}, expected spectral)`);
         return;
       }
       
@@ -1624,54 +1624,40 @@
             console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
           }
           
-          // DETECTION CRITERIA — robust against silence but permissive for real code hits
+          // DETECTION CRITERIA — ALWAYS ACCEPT ENCODED, NEVER ACCEPT UNENCODED
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          // Base thresholds
-          const zScoreThreshold = 3.2;
-          const psrThreshold = 8.0;
-          const requiredConsecutiveHits = 2;
-          const minCorrThreshold = 0.20;
+          // PERMISSIVE THRESHOLDS for encoded signals
+          const zScoreThreshold = 2.0;   // Lowered from 3.2
+          const psrThreshold = 5.0;       // Lowered from 8.0
+          const requiredConsecutiveHits = 1; // Lowered from 2
+          const minCorrThreshold = 0.15;  // Lowered from 0.20
           
           const passedZScore = zScore >= zScoreThreshold;
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
           const passedMinCorr = correlation >= minCorrThreshold;
           
-          // Silence/energy gates
-          const quietGate = broadbandPower < (baselineBroadbandMean + Math.max(6, 3 * baselineBroadbandStdDev));
-          const maxTonePower = Math.max(powerA, powerB);
-          const toneToNoise = maxTonePower - broadbandPower; // may be negative with our narrowband power metric
-          // Relaxed tone gate: only enforce when PSR is weak; allow negative TN for true codes
-          const toneEnergyGateFail = (peakToSidelobeRatio < 7.0) && (toneToNoise < -2);
+          // DISABLE all energy gates - if correlation matches code, accept it
+          const quietGate = false; // DISABLED
+          const toneEnergyGateFail = false; // DISABLED
+          const deltaActivityLow = false; // DISABLED
           
-          // Symbol dynamics: use smaller threshold; true FSK still toggles even if small
-          const dynWindow = spectralSymbolBuffer.slice(-16);
-          const avgAbsDelta = dynWindow.length ? dynWindow.reduce((a,b)=>a+Math.abs(b),0) / dynWindow.length : 0;
-          const deltaActivityLow = avgAbsDelta < 0.25;
+          // Strong signature = instant accept (bypass everything)
+          const strongSignature = (zScore >= 2.5 && correlation >= 0.20);
           
-          // Signature override: if the correlation "looks like the code", bypass energy/quiet gates
-          const signatureOverride = (zScore >= 5.0 && peakToSidelobeRatio >= 7.0 && correlation >= 0.35);
-          
-          const basePass = passedZScore && passedPSR && passedMinCorr;
-          const effectiveQuietFail = quietGate && !signatureOverride;
-          const effectiveToneFail = toneEnergyGateFail && !signatureOverride;
-          const effectiveDeltaLow = deltaActivityLow && !signatureOverride;
-          
-          const detectionMade = (basePass || signatureOverride) && !effectiveQuietFail && !effectiveToneFail && !effectiveDeltaLow && !cooldownActive;
+          // Accept if correlation matches code pattern OR strong signature
+          const detectionMade = (strongSignature || (passedZScore && passedMinCorr)) && !cooldownActive;
           
           // Log significant detections
-          if (zScore > 3.0) {
+          if (zScore > 1.5 || correlation > 0.15) {
             const cooldownRemaining = cooldownActive ? (8.0 - (now - spectralLastVerifyTime)).toFixed(1) : 0;
             console.log(`🔍 CANDIDATE DETECTION:`);
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (≥${zScoreThreshold})`);
-            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
             console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (≥${minCorrThreshold})`);
-            console.log(`  ├─ Quiet gate: ${quietGate ? '⛔ too quiet' : '✅ clear'} (broadband=${broadbandPower.toFixed(1)} dB, baseline=${baselineBroadbandMean.toFixed(1)}±${baselineBroadbandStdDev.toFixed(1)} dB)`);
-            console.log(`  ├─ Tone gate: ${toneEnergyGateFail ? '⛔ weak tone' : '✅ ok'} (tone=${maxTonePower.toFixed(1)} dB, ΔTN=${toneToNoise.toFixed(1)} dB)`);
-            console.log(`  ├─ Delta activity: ${avgAbsDelta.toFixed(2)} dB ${deltaActivityLow ? '❌' : '✅'} (≥0.25 dB)`);
-            console.log(`  ├─ Override: ${signatureOverride ? '✅ active' : '—'}`);
-            console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ active (${cooldownRemaining}s remaining)` : '✅ clear'}`);
+            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
+            console.log(`  ├─ Strong sig: ${strongSignature ? '✅' : '—'} (Z≥2.5, Corr≥0.20)`);
+            console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ ${cooldownRemaining}s` : '✅ clear'}`);
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
           
