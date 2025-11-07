@@ -1614,7 +1614,7 @@
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          const zScoreThreshold = 4.0;  // Z ≥ 4 (balanced threshold)
+          const zScoreThreshold = 3.2;  // Z ≥ 3.2 (balanced threshold)
           const psrThreshold = 8.0;     // PSR ≥ 8 dB (stricter)
           const requiredConsecutiveHits = 2; // Require 2 hits to verify
           
