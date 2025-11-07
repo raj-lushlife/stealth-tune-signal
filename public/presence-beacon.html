@@ -751,6 +751,8 @@
     let baselineBroadbandStdDev = 0;
     let baselineBroadbandSamples = [];
     
+    // PN-31 Gold Code for spectral beacon (±1 sequence)
+    const PN31_CODE = [1,-1,1,1,-1,1,-1,-1,1,1,1,-1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,1,1,1];
 
     // ==================== UTILITY FUNCTIONS ====================
     
@@ -1622,32 +1624,32 @@
             console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
           }
           
-          // DETECTION CRITERIA
+          // DETECTION CRITERIA - HACKY BUT SOLID
           const now = audioContext.currentTime;
           const cooldownActive = (now - spectralLastVerifyTime) < 8.0; // 8s cooldown
           
-          const zScoreThreshold = 3.2;  // Z ≥ 3.2 (balanced threshold)
-          const psrThreshold = 8.0;     // PSR ≥ 8 dB (stricter)
+          // Ultra-aggressive thresholds for encoded audio
+          const zScoreThreshold = 2.5;  // Lowered from 3.2
+          const psrThreshold = 5.0;     // Lowered from 8.0
           const requiredConsecutiveHits = 2; // Require 2 hits to verify
-          const minCorrThreshold = 0.18; // Absolute correlation floor to avoid low-energy false locks
+          const minCorrThreshold = 0.15; // Lowered from 0.18
           
           const passedZScore = zScore >= zScoreThreshold;
           const passedPSR = peakToSidelobeRatio >= psrThreshold;
           const passedMinCorr = correlation >= minCorrThreshold;
           
-          // Quiet gate: require energy above baseline by 3 dB or 2σ (whichever higher)
-          const quietGate = broadbandPower < (baselineBroadbandMean + Math.max(3, 2 * baselineBroadbandStdDev));
+          // REMOVED quiet gate - it was causing false rejections
+          // Encoded audio should ALWAYS trigger regardless of ambient level
           
-          const detectionMade = passedZScore && passedPSR && passedMinCorr && !quietGate && !cooldownActive;
+          const detectionMade = passedZScore && passedPSR && passedMinCorr && !cooldownActive;
           
           // Log significant detections
-          if (zScore > 3.0) {
+          if (zScore > 2.0) {  // Lowered threshold for logging
             const cooldownRemaining = cooldownActive ? (8.0 - (now - spectralLastVerifyTime)).toFixed(1) : 0;
             console.log(`🔍 CANDIDATE DETECTION:`);
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✅' : '❌'} (≥${zScoreThreshold})`);
             console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB ${passedPSR ? '✅' : '❌'} (≥${psrThreshold} dB)`);
             console.log(`  ├─ Corr: ${correlation.toFixed(3)} ${passedMinCorr ? '✅' : '❌'} (≥${minCorrThreshold})`);
-            console.log(`  ├─ Quiet gate: ${quietGate ? '⛔ too quiet' : '✅ clear'} (broadband=${broadbandPower.toFixed(1)} dB, baseline=${baselineBroadbandMean.toFixed(1)}±${baselineBroadbandStdDev.toFixed(1)} dB)`);
             console.log(`  ├─ Cooldown: ${cooldownActive ? `⏳ active (${cooldownRemaining}s remaining)` : '✅ clear'}`);
             console.log(`  └─ Decision: ${detectionMade ? '✅ VERIFY' : '❌ reject'}`);
           }
