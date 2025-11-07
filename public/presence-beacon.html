@@ -317,9 +317,76 @@
     </div>
 
     <div class="main-grid">
-      <!-- ENCODER (TX) SECTION -->
+      <!-- OFFLINE ENCODER SECTION -->
       <div class="section">
-        <h2>📡 ENCODER (TX)</h2>
+        <h2>🎛️ OFFLINE ENCODER (Test & Verify)</h2>
+        
+        <div class="control-group">
+          <label>Audio File (mp3/wav):</label>
+          <input type="file" id="offlineFile" accept="audio/*">
+          <div class="readout">Upload a file to encode with drops and hear the difference</div>
+        </div>
+
+        <div class="subsection">
+          <h3>Drop Parameters</h3>
+          <div class="grid-2col">
+            <div class="control-group">
+              <label>Drop Center (Hz):</label>
+              <input type="number" id="offlineDropCenter" value="8000" min="1000" max="20000">
+            </div>
+            <div class="control-group">
+              <label>Drop Bandwidth (Hz):</label>
+              <input type="number" id="offlineDropBw" value="600" min="100" max="2000">
+            </div>
+            <div class="control-group">
+              <label>Drop Depth (dB):</label>
+              <input type="number" id="offlineDropDepth" value="-12" min="-40" max="-0.5" step="0.5">
+            </div>
+            <div class="control-group">
+              <label>Drop Length (ms):</label>
+              <input type="number" id="offlineDropLen" value="1000" min="50" max="5000">
+            </div>
+            <div class="control-group">
+              <label>Drop Start Time (s):</label>
+              <input type="number" id="offlineDropStart" value="2" min="0" max="60" step="0.1">
+            </div>
+            <div class="control-group">
+              <label>Number of Drops:</label>
+              <input type="number" id="offlineDropCount" value="3" min="1" max="20">
+            </div>
+          </div>
+          <div class="readout">
+            💡 Tip: Use extreme values (e.g., -20dB depth, 2000ms length) to clearly hear the encoding
+          </div>
+        </div>
+
+        <div class="button-row">
+          <button id="processOfflineBtn" class="btn">Process File</button>
+          <button id="downloadOfflineBtn" class="btn btn-secondary" disabled>Download Encoded</button>
+        </div>
+
+        <div class="subsection" id="offlinePlayback" style="display:none;">
+          <h3>Playback Comparison</h3>
+          <div class="control-group">
+            <label>Original:</label>
+            <audio id="originalAudio" controls style="width:100%; margin-bottom:12px;"></audio>
+          </div>
+          <div class="control-group">
+            <label>Encoded (with drops):</label>
+            <audio id="encodedAudio" controls style="width:100%;"></audio>
+          </div>
+        </div>
+
+        <div class="readout" id="offlineReadout">
+          <div><strong>Status:</strong> <span id="offlineStatus">Ready - upload a file</span></div>
+          <div><strong>File Duration:</strong> <span id="offlineDuration">—</span></div>
+          <div><strong>Drops Encoded:</strong> <span id="offlineDropsEncoded">0</span></div>
+        </div>
+      </div>
+
+      <!-- LIVE ENCODER (TX) SECTION -->
+      <div class="section">
+        <h2>📡 LIVE ENCODER (TX)</h2>
 
         <div class="control-group">
           <label>Music Bed (mp3/wav, optional):</label>
@@ -1265,8 +1332,194 @@
       badge.classList.remove('verified');
     }
 
+    // ==================== OFFLINE ENCODER ====================
+    
+    let offlineOriginalBuffer = null;
+    let offlineEncodedBuffer = null;
+    
+    async function processOfflineFile() {
+      const fileInput = document.getElementById('offlineFile');
+      if (fileInput.files.length === 0) {
+        alert('Please upload an audio file first');
+        return;
+      }
+      
+      if (!audioContext) {
+        await initAudioContext();
+      }
+      
+      document.getElementById('offlineStatus').textContent = 'Loading file...';
+      document.getElementById('processOfflineBtn').disabled = true;
+      
+      try {
+        // Load original file
+        const file = fileInput.files[0];
+        const arrayBuffer = await file.arrayBuffer();
+        offlineOriginalBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        document.getElementById('offlineDuration').textContent = offlineOriginalBuffer.duration.toFixed(1) + 's';
+        document.getElementById('offlineStatus').textContent = 'Processing...';
+        
+        // Get parameters
+        const dropCenter = parseFloat(document.getElementById('offlineDropCenter').value);
+        const dropBw = parseFloat(document.getElementById('offlineDropBw').value);
+        const dropDepth = parseFloat(document.getElementById('offlineDropDepth').value);
+        const dropLenMs = parseFloat(document.getElementById('offlineDropLen').value);
+        const dropStart = parseFloat(document.getElementById('offlineDropStart').value);
+        const dropCount = parseInt(document.getElementById('offlineDropCount').value);
+        
+        console.log('🎛️ OFFLINE ENCODER: Starting processing');
+        console.log(`  ├─ File: ${file.name}, duration: ${offlineOriginalBuffer.duration.toFixed(1)}s`);
+        console.log(`  ├─ Drops: ${dropCount} × ${dropLenMs}ms @ ${dropDepth}dB`);
+        console.log(`  ├─ Frequency: ${dropCenter}Hz (BW: ${dropBw}Hz, Q: ${(dropCenter/dropBw).toFixed(2)})`);
+        console.log(`  └─ Schedule: starting at ${dropStart}s`);
+        
+        // Create offline context for processing
+        const offlineCtx = new OfflineAudioContext(
+          offlineOriginalBuffer.numberOfChannels,
+          offlineOriginalBuffer.length,
+          offlineOriginalBuffer.sampleRate
+        );
+        
+        // Create source
+        const source = offlineCtx.createBufferSource();
+        source.buffer = offlineOriginalBuffer;
+        
+        // Create peaking EQ filter for drops
+        const eq = offlineCtx.createBiquadFilter();
+        eq.type = 'peaking';
+        eq.frequency.value = dropCenter;
+        eq.Q.value = dropCenter / dropBw;
+        eq.gain.value = 0;
+        
+        // Connect graph
+        source.connect(eq);
+        eq.connect(offlineCtx.destination);
+        
+        // Schedule drops
+        const dropLenS = dropLenMs / 1000;
+        const fadeTime = 0.01; // 10ms fade
+        const spacing = 3.0; // 3 seconds between drops
+        
+        let dropsScheduled = 0;
+        for (let i = 0; i < dropCount; i++) {
+          const dropTime = dropStart + (i * spacing);
+          if (dropTime + dropLenS <= offlineOriginalBuffer.duration) {
+            eq.gain.setValueAtTime(0, dropTime);
+            eq.gain.linearRampToValueAtTime(dropDepth, dropTime + fadeTime);
+            eq.gain.setValueAtTime(dropDepth, dropTime + dropLenS - fadeTime);
+            eq.gain.linearRampToValueAtTime(0, dropTime + dropLenS);
+            dropsScheduled++;
+            
+            console.log(`  ✅ Drop ${i+1}: t=${dropTime.toFixed(1)}s → ${(dropTime+dropLenS).toFixed(1)}s`);
+          }
+        }
+        
+        source.start(0);
+        
+        // Render
+        offlineEncodedBuffer = await offlineCtx.startRendering();
+        
+        console.log(`✅ OFFLINE ENCODING COMPLETE: ${dropsScheduled} drops encoded`);
+        
+        // Create audio elements
+        const originalBlob = await bufferToWav(offlineOriginalBuffer);
+        const encodedBlob = await bufferToWav(offlineEncodedBuffer);
+        
+        const originalAudio = document.getElementById('originalAudio');
+        const encodedAudio = document.getElementById('encodedAudio');
+        
+        originalAudio.src = URL.createObjectURL(originalBlob);
+        encodedAudio.src = URL.createObjectURL(encodedBlob);
+        
+        // Show playback section
+        document.getElementById('offlinePlayback').style.display = 'block';
+        document.getElementById('offlineStatus').textContent = 'Complete! Compare playback above';
+        document.getElementById('offlineDropsEncoded').textContent = dropsScheduled;
+        document.getElementById('processOfflineBtn').disabled = false;
+        document.getElementById('downloadOfflineBtn').disabled = false;
+        
+      } catch (e) {
+        console.error('Offline encoding error:', e);
+        document.getElementById('offlineStatus').textContent = 'Error: ' + e.message;
+        document.getElementById('processOfflineBtn').disabled = false;
+      }
+    }
+    
+    function downloadEncodedFile() {
+      if (!offlineEncodedBuffer) {
+        alert('No encoded file available. Process a file first.');
+        return;
+      }
+      
+      bufferToWav(offlineEncodedBuffer).then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'encoded-with-drops.wav';
+        a.click();
+        URL.revokeObjectURL(url);
+        console.log('✅ Downloaded encoded file');
+      });
+    }
+    
+    async function bufferToWav(buffer) {
+      const numberOfChannels = buffer.numberOfChannels;
+      const length = buffer.length;
+      const sampleRate = buffer.sampleRate;
+      const bitDepth = 16;
+      
+      const bytesPerSample = bitDepth / 8;
+      const blockAlign = numberOfChannels * bytesPerSample;
+      
+      const dataSize = length * blockAlign;
+      const bufferSize = 44 + dataSize;
+      
+      const arrayBuffer = new ArrayBuffer(bufferSize);
+      const view = new DataView(arrayBuffer);
+      
+      // WAV header
+      const writeString = (offset, string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+      
+      writeString(0, 'RIFF');
+      view.setUint32(4, bufferSize - 8, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true); // fmt chunk size
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, numberOfChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * blockAlign, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bitDepth, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataSize, true);
+      
+      // Write audio data
+      let offset = 44;
+      for (let i = 0; i < length; i++) {
+        for (let ch = 0; ch < numberOfChannels; ch++) {
+          const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+          const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+          view.setInt16(offset, int16, true);
+          offset += 2;
+        }
+      }
+      
+      return new Blob([arrayBuffer], { type: 'audio/wav' });
+    }
+
     // ==================== EVENT LISTENERS ====================
     
+    // Offline encoder
+    document.getElementById('processOfflineBtn').addEventListener('click', processOfflineFile);
+    document.getElementById('downloadOfflineBtn').addEventListener('click', downloadEncodedFile);
+    
+    // Global audio
     document.getElementById('startAudioBtn').addEventListener('click', async () => {
       await initAudioContext();
       document.getElementById('startAudioBtn').style.display = 'none';
@@ -1282,6 +1535,7 @@
       }
     });
 
+    // Live TX
     document.getElementById('startTxBtn').addEventListener('click', startTX);
     document.getElementById('stopTxBtn').addEventListener('click', stopTX);
     document.getElementById('smokeTestBtn').addEventListener('click', () => {
@@ -1289,6 +1543,7 @@
       setTimeout(() => startTX(), 500);
     });
 
+    // RX
     document.getElementById('startRxBtn').addEventListener('click', startRX);
     document.getElementById('stopRxBtn').addEventListener('click', stopRX);
     document.getElementById('resetRxBtn').addEventListener('click', resetRX);
