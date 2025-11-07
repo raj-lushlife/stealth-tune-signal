@@ -1449,19 +1449,36 @@
             console.log(`  ├─ BestCorr: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
             console.log(`  ├─ Mean: ${mean.toFixed(3)}, StdDev: ${stdDev.toFixed(3)}, Z-score: ${zScore.toFixed(2)}`);
             console.log(`  ├─ Delta buffer (last 10): [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
-            console.log(`  └─ Thresholds: corr > 0.30, z-score > 2.0`);
+            console.log(`  └─ Thresholds: corr > 0.40, z-score > 3.0, stdDev > 0.15`);
           }
           
-          // Detection thresholds (tuned for real-world playback)
-          const corrThreshold = 0.30;
-          const zScoreMin = 2.0;
+          // Detection thresholds (stricter to avoid false positives from clapping/noise)
+          const corrThreshold = 0.40;  // Raised from 0.30
+          const zScoreMin = 3.0;       // Raised from 2.0
+          const minStdDev = 0.15;      // Require meaningful variation
           
-          if (correlation > corrThreshold && zScore > zScoreMin && !presenceVerified) {
+          // Check all conditions
+          const passedCorr = correlation > corrThreshold;
+          const passedZScore = zScore > zScoreMin;
+          const passedStdDev = stdDev > minStdDev;
+          const allPassed = passedCorr && passedZScore && passedStdDev;
+          
+          // Log detection result
+          if (correlation > 0.25) {  // Log near-misses for debugging
+            if (!allPassed) {
+              console.log(`❌ DETECTION FAILED:`);
+              console.log(`  ├─ Correlation: ${correlation.toFixed(3)} ${passedCorr ? '✓' : '✗'} (need > ${corrThreshold})`);
+              console.log(`  ├─ Z-score: ${zScore.toFixed(2)} ${passedZScore ? '✓' : '✗'} (need > ${zScoreMin})`);
+              console.log(`  └─ StdDev: ${stdDev.toFixed(3)} ${passedStdDev ? '✓' : '✗'} (need > ${minStdDev})`);
+            }
+          }
+          
+          if (allPassed && !presenceVerified) {
             presenceVerified = true;
             const badge = document.getElementById('presenceBadge');
             badge.textContent = '✅ Presence Verified!';
             badge.classList.add('verified');
-            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
+            console.log(`🎉 PRESENCE VERIFIED! Corr: ${correlation.toFixed(3)}, Z-score: ${zScore.toFixed(2)}, StdDev: ${stdDev.toFixed(3)}, phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'}`);
           }
         }
       } else {
