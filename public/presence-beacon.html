@@ -585,12 +585,16 @@
                 <div class="value" id="corrZScore">—</div>
               </div>
               <div class="band-meter">
+                <div class="label">Consecutive Hits</div>
+                <div class="value" id="consecutiveHits">0/3</div>
+              </div>
+              <div class="band-meter">
                 <div class="label">Loudness</div>
                 <div class="value" id="loudnessLevel">—</div>
               </div>
             </div>
             <div class="readout">
-              <div><strong>Correlation Threshold:</strong> 0.50 | <strong>Z-Score Min:</strong> 3.0</div>
+              <div><strong>Thresholds:</strong> Corr > 0.35, Z-score > 2.0, StdDev > 0.08, 3 consecutive</div>
             </div>
           </div>
         </div>
@@ -1444,6 +1448,7 @@
           // Update display
           document.getElementById('corrPeak').textContent = correlation.toFixed(3);
           document.getElementById('corrZScore').textContent = zScore.toFixed(2);
+          document.getElementById('consecutiveHits').textContent = `${spectralConsecutiveHits}/${consecutiveRequired}`;
           
           // Log correlation at first full window and periodically every ~codeLen frames
           if (spectralSymbolBuffer.length === codeLen || frameCount % codeLen === 0) {
