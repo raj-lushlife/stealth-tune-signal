@@ -1858,6 +1858,7 @@
               codeDetectionAttempts = [];
               codeRepeatTimestamps = [];
               updateFSMStateDisplay();
+              console.log(`[config] thresholds: corr>=${CORR_THRESHOLD}, psr>=${PSR_THRESHOLD}dB, z>=${Z_THRESHOLD}, median|Δ|>=${MEDIAN_DELTA_THRESHOLD}dB, energy<=${ENERGY_BALANCE_THRESHOLD}dB, guards<=${GUARD_THRESHOLD}dB, vote=${VOTE_WINDOW}s`);
             }
           }
           
@@ -1907,8 +1908,8 @@
             if (correlation > 0.30 || zScore > 2.0 || peakToSidelobeRatio > 7.0) {
               console.log(`🔍 CODE_LOCK CANDIDATE:`);
               console.log(`  ├─ [preamble] drift=${(preambleDriftEstimate*100).toFixed(2)}%`);
-              console.log(`  ├─ [match] t=${elapsed.toFixed(2)}s corr=${correlation.toFixed(3)} ${corrPass?'✅':'❌'} psr=${peakToSidelobeRatio.toFixed(1)}dB ${psrPass?'✅':'❌'} z=${zScore.toFixed(2)} ${zPass?'✅':'❌'}`);
-              console.log(`  ├─ [per-symbol] median|Δ|=${medianDelta.toFixed(2)}dB ${medianDeltaPass?'✅':'❌'} energyDev=${energyDeviation.toFixed(1)}dB ${energyBalancePass?'✅':'❌'}`);
+              console.log(`  ├─ [match] t=${elapsed.toFixed(2)}s corr=${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'} psr=${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'} z=${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
+              console.log(`  ├─ [per-symbol] median|Δ|=${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'} energyDev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
               console.log(`  ├─ [guards] Lo: ${guardLoDeviation.toFixed(1)}dB ${guardLoDeviation<=GUARD_THRESHOLD?'✅':'❌'}, Hi: ${guardHiDeviation.toFixed(1)}dB ${guardHiDeviation<=GUARD_THRESHOLD?'✅':'❌'} → ${guardsPass?'✅':'❌'}`);
             }
             
