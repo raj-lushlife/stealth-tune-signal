@@ -726,7 +726,7 @@
     let spectralSymbolBuffer = [];  // Buffered delta values
     let spectralCorrelationHistory = [];  // For Z-score calculation
     let spectralConsecutiveHits = 0; // Track consecutive good correlations
-
+    let consecutiveRequired = 3; // Required consecutive detections for verification
     // PN-31 Gold Code for spectral beacon (±1 sequence)
     const PN31_CODE = [1,-1,1,1,-1,1,-1,-1,1,1,1,-1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,1,1,1];
 
@@ -1463,7 +1463,6 @@
           const corrThreshold = 0.35;  // Higher than noise floor
           const zScoreMin = 2.0;       // Require statistical significance
           const minStdDev = 0.08;      // Meaningful variation
-          const consecutiveRequired = 3; // Must detect 3 times in a row
           
           // Check all conditions
           const passedCorr = correlation > corrThreshold;
