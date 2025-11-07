@@ -1734,11 +1734,13 @@
           const zScore = baselineCorrelationStdDev > 1e-6 ? 
             (correlation - baselineCorrelationMean) / baselineCorrelationStdDev : 0;
           
-          // Update display
-          document.getElementById('corrPeak').textContent = correlation.toFixed(3);
-          document.getElementById('corrZScore').textContent = zScore.toFixed(2);
-          document.getElementById('corrPSR').textContent = peakToSidelobeRatio.toFixed(1);
-          document.getElementById('consecutiveHits').textContent = spectralConsecutiveHits;
+          // Update display (with null checks)
+          const corrPeakEl = document.getElementById('corrPeak');
+          const corrZScoreEl = document.getElementById('corrZScore');
+          const corrPSREl = document.getElementById('corrPSR');
+          if (corrPeakEl) corrPeakEl.textContent = correlation.toFixed(3);
+          if (corrZScoreEl) corrZScoreEl.textContent = zScore.toFixed(2);
+          if (corrPSREl) corrPSREl.textContent = peakToSidelobeRatio.toFixed(1);
           
           // Log RX activity to show it's running
           if (frameCount % 60 === 0 && frameCount > 0) {
