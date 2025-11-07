@@ -71,3 +71,24 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+
+## 🎵 Presence Beacon
+
+This project includes an advanced spread-spectrum audio presence beacon system at `/presence-beacon.html`.
+
+### What it does
+Over-air presence verification using imperceptible spectral modifications at 12 kHz. Encodes PN-31 Gold code via differential A/B modulation, detected via correlation matching with adaptive baseline calibration.
+
+### Quick Start
+1. **RX (Listener)**: Open `/presence-beacon.html` → Click "Start Audio" → "Start RX" → Wait for "✅ Calibrated"
+2. **TX (Encoder)**: Open `/presence-beacon.html` in another tab/device → "Start Audio" → "Start TX"
+3. **Verify**: RX should show "🔓 UNLOCKED" within 10-16 seconds
+
+### Documentation
+See [SPREAD-SPECTRUM-PRESENCE-BEACON.md](./SPREAD-SPECTRUM-PRESENCE-BEACON.md) for comprehensive technical documentation.
+
+### Current Status
+✅ **Working configuration** - Encoded audio unlocks (corr=0.410, z=4.61), unencoded audio correctly rejected (z<2.5).
+
+### Testing Checklist
+See [CHECKLIST.md](./CHECKLIST.md) for validation procedures.
