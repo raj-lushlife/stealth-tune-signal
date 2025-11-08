@@ -888,9 +888,9 @@
         b6 = white * 0.115926;
       }
       
-      // Low level for demo
+      // NUCLEAR BOOST: Increased level from 0.15 to 0.6 (4× louder)
       for (let i = 0; i < length; i++) {
-        output[i] *= 0.15;
+        output[i] *= 0.6;
       }
       
       // Calculate and log RMS level
@@ -1032,10 +1032,10 @@
       bedSource.buffer = bedBuffer;
       bedSource.loop = true;
       
-      // Get parameters
+      // Get parameters - NUCLEAR BOOST MODE
       const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
       const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
-      const symbolGain = parseFloat(document.getElementById('spectralGain').value);
+      const symbolGain = 18.0; // NUCLEAR: Boosted from ±6.5dB to ±18dB for maximum differential
       
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
@@ -1056,11 +1056,18 @@
       
       spectralFilters = { binA: filterA, binB: filterB };
       
-      // Connect: source -> filterA -> filterB -> masterGain -> destination
+      // NUCLEAR BOOST: Add high-shelf pre-emphasis at 12-14kHz (+6dB)
+      const preEmphasis = audioContext.createBiquadFilter();
+      preEmphasis.type = 'highshelf';
+      preEmphasis.frequency.value = 13000; // 13kHz shelf
+      preEmphasis.gain.value = 6; // +6dB boost above 13kHz
+      
+      // Connect: source -> preEmphasis -> filterA -> filterB -> masterGain -> destination
       const outputGainDb = parseFloat(document.getElementById('outputGain').value);
       masterGain.gain.value = dbToLinear(outputGainDb);
       
-      bedSource.connect(filterA);
+      bedSource.connect(preEmphasis);
+      preEmphasis.connect(filterA);
       filterA.connect(filterB);
       filterB.connect(masterGain);
       
@@ -1088,12 +1095,14 @@
       };
       checkOutputLevel();
       
-      console.log('✅ SPECTRAL BEACON TX INITIALIZED');
+      console.log('✅ SPECTRAL BEACON TX INITIALIZED - 🔥 NUCLEAR MODE 🔥');
       console.log(`  ├─ Frequency A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
-      console.log(`  ├─ Symbol gain: ±${symbolGain}dB, Q: 50 (BW ~${(freqA/50).toFixed(0)}Hz)`);
+      console.log(`  ├─ Symbol gain: ±${symbolGain}dB (NUCLEAR BOOST - 3× normal), Q: 50 (BW ~${(freqA/50).toFixed(0)}Hz)`);
+      console.log(`  ├─ Pre-emphasis: +6dB high-shelf @ 13kHz (makes signal more apparent)`);
       console.log(`  ├─ Output gain: ${outputGainDb}dB (master volume: ${masterGain.gain.value.toFixed(3)})`);
       console.log(`  ├─ Code length: ${PN31_CODE.length} symbols × ${parseInt(document.getElementById('spectralRepeats').value)} repeats`);
       console.log(`  └─ Burst every ${parseFloat(document.getElementById('spectralBurstInterval').value)}s`);
+      console.log(`  ⚠️  WARNING: Signal may be slightly audible at this power level`);
       
       document.getElementById('txStatus').textContent = 'Transmitting Spectral Beacon';
       
@@ -1105,7 +1114,7 @@
       if (!txRunning || currentMode !== 'spectral') return;
       
       const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
-      const symbolGain = parseFloat(document.getElementById('spectralGain').value);
+      const symbolGain = 18.0; // NUCLEAR: Use boosted gain
       const repeats = parseInt(document.getElementById('spectralRepeats').value);
       const burstIntervalS = parseFloat(document.getElementById('spectralBurstInterval').value);
       
@@ -1575,12 +1584,28 @@
         return;
       }
       
+      // Initialize frame counter for aggressive diagnostics
+      if (!window.rxDiagnosticFrameCount) window.rxDiagnosticFrameCount = 0;
+      window.rxDiagnosticFrameCount++;
+      const frameNum = window.rxDiagnosticFrameCount;
+      
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Float32Array(bufferLength);
       analyser.getFloatFrequencyData(dataArray);
       
       const sampleRate = audioContext.sampleRate;
       const binHz = (sampleRate / 2) / (bufferLength - 1);
+      
+      // DIAGNOSTIC: Log FFT data statistics for first 100 frames
+      if (frameNum <= 100) {
+        const validData = Array.from(dataArray).filter(v => v > -Infinity);
+        const min = Math.min(...validData);
+        const max = Math.max(...validData);
+        const mean = validData.reduce((a,b) => a+b, 0) / validData.length;
+        console.log(`🔍 RX DIAGNOSTIC Frame ${frameNum} @ t=${audioContext.currentTime.toFixed(2)}s:`);
+        console.log(`  ├─ FFT Stats: min=${min.toFixed(1)}dB, max=${max.toFixed(1)}dB, mean=${mean.toFixed(1)}dB`);
+        console.log(`  └─ Audio input ${mean > -80 ? '✅ ACTIVE' : '❌ TOO QUIET - CHECK MIC'}`);
+      }
       
       // Get parameters
       const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
@@ -1589,9 +1614,27 @@
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
       
+      // DIAGNOSTIC: Calculate FFT bin indices
+      const binIndexA = Math.round(freqA / binHz);
+      const binIndexB = Math.round(freqB / binHz);
+      
       // Extract power at bins A and B - measure ±1 bin around each center
       const powerA = computeBandPower(dataArray, binHz, freqA - binHz, freqA + binHz);
       const powerB = computeBandPower(dataArray, binHz, freqB - binHz, freqB + binHz);
+      
+      // DIAGNOSTIC: Show real-time FFT visualization for first 100 frames
+      if (frameNum <= 100) {
+        const getContext = (idx) => {
+          const before = [dataArray[idx-2], dataArray[idx-1]].map(v => v?.toFixed(1) || '-∞');
+          const center = dataArray[idx]?.toFixed(1) || '-∞';
+          const after = [dataArray[idx+1], dataArray[idx+2]].map(v => v?.toFixed(1) || '-∞');
+          return `[${before.join(',')},(${center}),${after.join(',')}]`;
+        };
+        console.log(`  ├─ Bin A [${binIndexA}] @ ${freqA}Hz: ${getContext(binIndexA)} dB`);
+        console.log(`  ├─ Bin B [${binIndexB}] @ ${freqB}Hz: ${getContext(binIndexB)} dB`);
+        console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB`);
+        console.log(`  └─ Δ (B-A): ${(powerB - powerA).toFixed(2)}dB`);
+      }
       
       // Guards (for baseline stability check) - placed ±3× bin spacing for better isolation
       const guardLoFreq = freqA - 3 * binSpacing;
@@ -1687,6 +1730,9 @@
             window.baselineGuardLoSamples.push(powerGuardLo);
             window.baselineGuardHiSamples.push(powerGuardHi);
             
+            // DIAGNOSTIC: Log every calibration sample
+            console.log(`📊 CALIBRATION Sample ${baselineCalibrationSamples.length}/70: corr=${correlation.toFixed(3)}, broadband=${broadbandPower.toFixed(1)}dB, energySum=${currentEnergySum.toFixed(1)}dB`);
+            
             if (baselineCalibrationSamples.length >= 70) {
               // Compute baseline statistics
               baselineCorrelationMean = baselineCalibrationSamples.reduce((a,b) => a+b, 0) / baselineCalibrationSamples.length;
@@ -1743,11 +1789,6 @@
               console.log(`  └─ Detection threshold: ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (mean + 5σ)`);
               console.log('✅ NOW LISTENING FOR ENCODED SIGNAL... (You can start TX now)');
             } else {
-              // Show calibration progress
-              if (baselineCalibrationSamples.length % 10 === 0) {
-                console.log(`📊 Calibrating... ${baselineCalibrationSamples.length}/70 samples (corr: ${correlation.toFixed(3)})`);
-              }
-              
               // Update UI during calibration
               document.getElementById('baselineStatus').textContent = `Calibrating... ${baselineCalibrationSamples.length}/70`;
             }
