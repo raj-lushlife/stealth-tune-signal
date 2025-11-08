@@ -534,7 +534,10 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="spectralGain" value="6.5" min="0.5" max="10" step="0.1">
+              <input type="number" id="spectralGain" value="12" min="3" max="24" step="0.5">
+              <div class="readout" style="font-size:10px; margin-top:4px;">
+                3-6dB: Imperceptible | 8-12dB: Balanced | 15-24dB: Max detection
+              </div>
             </div>
             <div class="control-group">
               <label>Burst Interval (s):</label>
@@ -542,7 +545,7 @@
             </div>
           </div>
           <div class="readout">
-            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. Default ±6.5dB balances detectability and subtlety; lower for imperceptible encoding.
+            💡 <strong>Testing Guide:</strong> Start at ±12dB for reliable detection. Once working, gradually reduce to find the minimum imperceptible level for your audio content (music may tolerate 6-8dB, speech needs 10-15dB). For speaker→mic testing, 12-18dB recommended.
           </div>
         </div>
 
@@ -1140,10 +1143,10 @@
       bedSource.buffer = bedBuffer;
       bedSource.loop = true;
       
-      // Get parameters - NUCLEAR BOOST MODE
+      // Get parameters - Use UI-controlled gain for testing flexibility
       const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
       const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
-      const symbolGain = 18.0; // NUCLEAR: Boosted from ±6.5dB to ±18dB for maximum differential
+      const symbolGain = parseFloat(document.getElementById('spectralGain').value); // Use UI slider
       
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
@@ -1203,14 +1206,16 @@
       };
       checkOutputLevel();
       
-      console.log('✅ SPECTRAL BEACON TX INITIALIZED - 🔥 NUCLEAR MODE 🔥');
+      console.log('✅ SPECTRAL BEACON TX INITIALIZED');
       console.log(`  ├─ Frequency A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
-      console.log(`  ├─ Symbol gain: ±${symbolGain}dB (NUCLEAR BOOST - 3× normal), Q: 50 (BW ~${(freqA/50).toFixed(0)}Hz)`);
-      console.log(`  ├─ Pre-emphasis: +6dB high-shelf @ 13kHz (makes signal more apparent)`);
+      console.log(`  ├─ Symbol gain: ±${symbolGain}dB, Q: 50 (BW ~${(freqA/50).toFixed(0)}Hz)`);
+      console.log(`  ├─ Pre-emphasis: +6dB high-shelf @ 13kHz`);
       console.log(`  ├─ Output gain: ${outputGainDb}dB (master volume: ${masterGain.gain.value.toFixed(3)})`);
       console.log(`  ├─ Code length: ${PN31_CODE.length} symbols × ${parseInt(document.getElementById('spectralRepeats').value)} repeats`);
       console.log(`  └─ Burst every ${parseFloat(document.getElementById('spectralBurstInterval').value)}s`);
-      console.log(`  ⚠️  WARNING: Signal may be slightly audible at this power level`);
+      if (symbolGain > 10) {
+        console.log(`  ⚠️  WARNING: Gain >${10}dB may be audible on music`);
+      }
       
       document.getElementById('txStatus').textContent = 'Transmitting Spectral Beacon';
       
@@ -1222,7 +1227,7 @@
       if (!txRunning || currentMode !== 'spectral') return;
       
       const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
-      const symbolGain = 18.0; // NUCLEAR: Use boosted gain
+      const symbolGain = parseFloat(document.getElementById('spectralGain').value); // Use UI slider
       const repeats = parseInt(document.getElementById('spectralRepeats').value);
       const burstIntervalS = parseFloat(document.getElementById('spectralBurstInterval').value);
       
