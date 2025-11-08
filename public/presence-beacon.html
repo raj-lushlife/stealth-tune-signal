@@ -1598,10 +1598,10 @@
       
       // DIAGNOSTIC: Log FFT data statistics for first 100 frames
       if (frameNum <= 100) {
-        const validData = Array.from(dataArray).filter(v => v > -Infinity);
-        const min = Math.min(...validData);
-        const max = Math.max(...validData);
-        const mean = validData.reduce((a,b) => a+b, 0) / validData.length;
+        const validData = Array.from(dataArray).filter(v => isFinite(v));
+        const min = validData.length > 0 ? Math.min(...validData) : -200;
+        const max = validData.length > 0 ? Math.max(...validData) : -200;
+        const mean = validData.length > 0 ? validData.reduce((a,b) => a+b, 0) / validData.length : -200;
         console.log(`🔍 RX DIAGNOSTIC Frame ${frameNum} @ t=${audioContext.currentTime.toFixed(2)}s:`);
         console.log(`  ├─ FFT Stats: min=${min.toFixed(1)}dB, max=${max.toFixed(1)}dB, mean=${mean.toFixed(1)}dB`);
         console.log(`  └─ Audio input ${mean > -80 ? '✅ ACTIVE' : '❌ TOO QUIET - CHECK MIC'}`);
@@ -1801,7 +1801,16 @@
               console.log(`  ├─ Energy Sum Baseline: ${baselineEnergySum.toFixed(1)} dB`);
               console.log(`  ├─ Guard Lo Baseline: ${baselineGuardLo.toFixed(1)} dB, Guard Hi Baseline: ${baselineGuardHi.toFixed(1)} dB`);
               console.log(`  └─ Detection threshold: ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (mean + 5σ)`);
-              console.log('✅ NOW LISTENING FOR ENCODED SIGNAL... (You can start TX now)');
+              console.log('✅ NOW LISTENING FOR ENCODED SIGNAL...');
+              
+              // AUTO-START TX: Start transmitting encoded audio automatically
+              console.log('🚀 AUTO-STARTING TX (encoded audio)...');
+              if (!txRunning) {
+                setTimeout(() => {
+                  startTX();
+                  console.log('✅ TX AUTO-STARTED - Now testing with encoded audio');
+                }, 500); // Small delay to ensure RX is fully ready
+              }
             } else {
               // Update UI during calibration
               document.getElementById('baselineStatus').textContent = `Calibrating... ${baselineCalibrationSamples.length}/70`;
@@ -1853,10 +1862,10 @@
             return;
           }
           
-          // FSM thresholds - TUNED to actual signal levels
-          const CORR_THRESHOLD = 0.38; // Matches consistently achieved 0.388
-          const PSR_THRESHOLD = 9.0; // Matches consistently achieved 9.2-9.6dB
-          const Z_THRESHOLD = 2.0; // Matches consistently achieved 2.11
+          // FSM thresholds - Re-tightened after confirming TX works
+          const CORR_THRESHOLD = 0.45; // Require strong correlation
+          const PSR_THRESHOLD = 10.0; // Require distinct peak
+          const Z_THRESHOLD = 3.0; // Require statistical significance
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
           const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
           const GUARD_THRESHOLD = 15.0; // dB (nuclear boost causes some leakage)
