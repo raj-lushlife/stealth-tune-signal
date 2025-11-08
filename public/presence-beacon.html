@@ -1776,6 +1776,130 @@
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
       
+      // Add delta to buffer (always, even during calibration)
+      spectralSymbolBuffer.push(delta);
+      
+      // Keep buffer at code length
+      const codeLen = PN31_CODE.length;
+      if (spectralSymbolBuffer.length > codeLen * 2) {
+        spectralSymbolBuffer.shift();
+      }
+      
+      // BASELINE CALIBRATION PHASE (MOVED OUTSIDE correlation check - collect EVERY frame)
+      if (!baselineCalibrated) {
+        // Initialize collection arrays
+        if (!window.baselineEnergySamples) window.baselineEnergySamples = [];
+        if (!window.baselineGuardLoSamples) window.baselineGuardLoSamples = [];
+        if (!window.baselineGuardHiSamples) window.baselineGuardHiSamples = [];
+        if (!window.baselineDeltaSamples) window.baselineDeltaSamples = [];
+        
+        const currentEnergySum = linearToDb(powerA + powerB);
+        window.baselineEnergySamples.push(currentEnergySum);
+        window.baselineGuardLoSamples.push(powerGuardLo);
+        window.baselineGuardHiSamples.push(powerGuardHi);
+        window.baselineDeltaSamples.push(Math.abs(delta)); // Track delta magnitude for calibration
+        baselineBroadbandSamples.push(broadbandPower);
+        
+        // DIAGNOSTIC: Log every calibration sample
+        const calSampleCount = window.baselineDeltaSamples.length;
+        console.log(`📊 CALIBRATION Sample ${calSampleCount}/70: delta=${delta.toFixed(2)}dB, broadband=${broadbandPower.toFixed(1)}dB, energySum=${currentEnergySum.toFixed(1)}dB`);
+        
+        if (calSampleCount >= 70) {
+          // Compute baseline statistics from collected samples
+          const deltaMagnitudes = window.baselineDeltaSamples;
+          baselineCorrelationMean = deltaMagnitudes.reduce((a,b) => a+b, 0) / deltaMagnitudes.length;
+          const variance = deltaMagnitudes.reduce((a,b) => a + Math.pow(b - baselineCorrelationMean, 2), 0) / deltaMagnitudes.length;
+          baselineCorrelationStdDev = Math.max(Math.sqrt(variance), 0.5); // Use delta stddev as noise estimate
+          
+          // Compute broadband baseline statistics
+          baselineBroadbandMean = baselineBroadbandSamples.reduce((a,b) => a+b, 0) / baselineBroadbandSamples.length;
+          const bbVar = baselineBroadbandSamples.reduce((a,b) => a + Math.pow(b - baselineBroadbandMean, 2), 0) / baselineBroadbandSamples.length;
+          baselineBroadbandStdDev = Math.max(Math.sqrt(bbVar), 0.5);
+          
+          // Compute energy and guard baselines
+          baselineEnergySum = window.baselineEnergySamples.reduce((a,b) => a+b, 0) / window.baselineEnergySamples.length;
+          baselineGuardLo = window.baselineGuardLoSamples.reduce((a,b) => a+b, 0) / window.baselineGuardLoSamples.length;
+          baselineGuardHi = window.baselineGuardHiSamples.reduce((a,b) => a+b, 0) / window.baselineGuardHiSamples.length;
+          
+          // VALIDATION: Check if calibration makes sense
+          if (baselineCorrelationMean > 10) {
+            console.error('⚠️ CALIBRATION FAILED: Baseline delta too high!');
+            console.error('  ├─ Measured baseline: ' + baselineCorrelationMean.toFixed(3));
+            console.error('  └─ Likely cause: TX was running during calibration (measuring signal instead of noise)');
+            console.error('  └─ ACTION: Stop TX, restart RX to recalibrate noise floor');
+            
+            document.getElementById('baselineStatus').textContent = '❌ CALIBRATION FAILED';
+            document.getElementById('baselineNoise').textContent = 'TX was ON during cal!';
+            document.getElementById('detectionThreshold').textContent = 'Stop TX & recalibrate';
+            
+            // Don't proceed with broken calibration
+            baselineCalibrated = false;
+            window.baselineDeltaSamples = [];
+            window.baselineEnergySamples = [];
+            window.baselineGuardLoSamples = [];
+            window.baselineGuardHiSamples = [];
+            baselineBroadbandSamples = [];
+            return;
+          }
+          
+          if (baselineCorrelationStdDev < 0.1) {
+            console.error('⚠️ CALIBRATION SUSPICIOUS: StdDev too low (no variation)');
+            console.error('  └─ Microphone may not be working properly');
+          }
+          
+          baselineCalibrated = true;
+          
+          document.getElementById('baselineStatus').textContent = '✅ Calibrated - Ready';
+          const displayStd = baselineCorrelationStdDev;
+          const thresholdVal = 15; // Threshold: 15dB delta required for detection
+          document.getElementById('baselineNoise').textContent = `Mean: ${baselineCorrelationMean.toFixed(2)}dB, σ: ${displayStd.toFixed(2)}dB`;
+          document.getElementById('detectionThreshold').textContent = `Δ > ${thresholdVal}dB (strong signal req)`;
+          
+          console.log('🎯 BASELINE CALIBRATION COMPLETE:');
+          console.log(`  ├─ Noise Mean Delta: ${baselineCorrelationMean.toFixed(2)}dB`);
+          console.log(`  ├─ Noise StdDev: ${baselineCorrelationStdDev.toFixed(2)}dB`);
+          console.log(`  ├─ Broadband Mean: ${baselineBroadbandMean.toFixed(1)} dB, σ: ${baselineBroadbandStdDev.toFixed(1)} dB`);
+          console.log(`  ├─ Energy Sum Baseline: ${baselineEnergySum.toFixed(1)} dB`);
+          console.log(`  ├─ Guard Lo Baseline: ${baselineGuardLo.toFixed(1)} dB, Guard Hi Baseline: ${baselineGuardHi.toFixed(1)} dB`);
+          console.log(`  └─ Detection threshold: Δ > 15dB`);
+          console.log('✅ NOW LISTENING FOR ENCODED SIGNAL...');
+          
+          // AUTO-START TX: Start transmitting encoded audio automatically
+          console.log('🚀 AUTO-STARTING TX (encoded audio)...');
+          console.log(`  ├─ Current txRunning state: ${txRunning}`);
+          console.log(`  ├─ audioContext exists: ${!!audioContext}`);
+          console.log(`  └─ Will call startTX() in 500ms...`);
+          
+          if (!txRunning) {
+            setTimeout(() => {
+              console.log('⏰ Auto-start timeout fired - calling startTX()...');
+              try {
+                startTX();
+                console.log('✅ TX AUTO-STARTED - Now testing with encoded audio');
+              } catch (error) {
+                console.error('❌ Auto-start failed:', error);
+              }
+            }, 500); // Small delay to ensure RX is fully ready
+          } else {
+            console.log('⚠️ TX already running, skipping auto-start');
+          }
+        } else {
+          // Update UI during calibration
+          document.getElementById('baselineStatus').textContent = `Calibrating... ${calSampleCount}/70`;
+          
+          // Log progress every 10 frames
+          if (calSampleCount % 10 === 0) {
+            console.log(`📊 CALIBRATION PROGRESS: ${calSampleCount}/70 samples collected`);
+          }
+        }
+        
+        // Update UI during calibration
+        document.getElementById('corrPeak').textContent = `${Math.abs(delta).toFixed(2)}dB (cal)`;
+        document.getElementById('corrZScore').textContent = `${calSampleCount}/70`;
+        document.getElementById('corrPSR').textContent = '—';
+        return; // Don't detect during calibration
+      }
+      
       // Detailed logging every 20 frames (~1.2s at 60ms symbols)
       const frameCount = spectralSymbolBuffer.length;
       if (frameCount % 20 === 0 && frameCount > 0) {
@@ -1787,15 +1911,6 @@
       }
       
       if (!loudnessVeto) {
-        // Add delta to buffer
-        spectralSymbolBuffer.push(delta);
-        
-        // Keep buffer at code length
-        const codeLen = PN31_CODE.length;
-        if (spectralSymbolBuffer.length > codeLen * 2) {
-          spectralSymbolBuffer.shift();
-        }
-        
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
           // Phase scan and polarity check
@@ -1837,116 +1952,6 @@
           const sidelobeMean = sidelobes.length > 0 ? sidelobes.reduce((a,b) => a+b, 0) / sidelobes.length : 0;
           const peakToSidelobeRatio = correlation > 0 && sidelobeMean > 0 ? 
             20 * Math.log10(correlation / Math.max(sidelobeMean, 0.001)) : 0;
-          
-      // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
-          if (!baselineCalibrated) {
-            baselineCalibrationSamples.push(correlation);
-            baselineBroadbandSamples.push(broadbandPower);
-            
-            // Also collect energy and guard baseline samples
-            if (!window.baselineEnergySamples) window.baselineEnergySamples = [];
-            if (!window.baselineGuardLoSamples) window.baselineGuardLoSamples = [];
-            if (!window.baselineGuardHiSamples) window.baselineGuardHiSamples = [];
-            
-            const currentEnergySum = linearToDb(powerA + powerB);
-            window.baselineEnergySamples.push(currentEnergySum);
-            window.baselineGuardLoSamples.push(powerGuardLo);
-            window.baselineGuardHiSamples.push(powerGuardHi);
-            
-            // DIAGNOSTIC: Log every calibration sample
-            console.log(`📊 CALIBRATION Sample ${baselineCalibrationSamples.length}/70: corr=${correlation.toFixed(3)}, broadband=${broadbandPower.toFixed(1)}dB, energySum=${currentEnergySum.toFixed(1)}dB`);
-            
-            if (baselineCalibrationSamples.length >= 70) {
-              // Compute baseline statistics
-              baselineCorrelationMean = baselineCalibrationSamples.reduce((a,b) => a+b, 0) / baselineCalibrationSamples.length;
-              const variance = baselineCalibrationSamples.reduce((a,b) => a + Math.pow(b - baselineCorrelationMean, 2), 0) / baselineCalibrationSamples.length;
-              baselineCorrelationStdDev = Math.max(Math.sqrt(variance), 0.02);
-              
-              // Compute broadband baseline statistics
-              baselineBroadbandMean = baselineBroadbandSamples.reduce((a,b) => a+b, 0) / baselineBroadbandSamples.length;
-              const bbVar = baselineBroadbandSamples.reduce((a,b) => a + Math.pow(b - baselineBroadbandMean, 2), 0) / baselineBroadbandSamples.length;
-              baselineBroadbandStdDev = Math.max(Math.sqrt(bbVar), 0.5);
-              
-              // Compute energy and guard baselines
-              baselineEnergySum = window.baselineEnergySamples.reduce((a,b) => a+b, 0) / window.baselineEnergySamples.length;
-              baselineGuardLo = window.baselineGuardLoSamples.reduce((a,b) => a+b, 0) / window.baselineGuardLoSamples.length;
-              baselineGuardHi = window.baselineGuardHiSamples.reduce((a,b) => a+b, 0) / window.baselineGuardHiSamples.length;
-              
-              // VALIDATION: Check if calibration makes sense
-              if (baselineCorrelationMean > 0.4) {
-                console.error('⚠️ CALIBRATION FAILED: Baseline correlation too high!');
-                console.error('  ├─ Measured baseline: ' + baselineCorrelationMean.toFixed(3));
-                console.error('  └─ Likely cause: TX was running during calibration (measuring signal instead of noise)');
-                console.error('  └─ ACTION: Stop TX, restart RX to recalibrate noise floor');
-                
-                document.getElementById('baselineStatus').textContent = '❌ CALIBRATION FAILED';
-                document.getElementById('baselineNoise').textContent = 'TX was ON during cal!';
-                document.getElementById('detectionThreshold').textContent = 'Stop TX & recalibrate';
-                
-                // Don't proceed with broken calibration
-                baselineCalibrated = false;
-                baselineCalibrationSamples = [];
-                baselineBroadbandSamples = [];
-                return;
-              }
-              
-              if (baselineCorrelationStdDev < 0.01) {
-                console.error('⚠️ CALIBRATION SUSPICIOUS: StdDev too low (no variation)');
-                console.error('  └─ Microphone may not be working properly');
-              }
-              
-              baselineCalibrated = true;
-              
-              document.getElementById('baselineStatus').textContent = '✅ Calibrated - Ready';
-              const displayStd = baselineCorrelationStdDev;
-              const thresholdVal = Math.max(baselineCorrelationMean + 5 * displayStd, 0.35);
-              document.getElementById('baselineNoise').textContent = `Mean: ${baselineCorrelationMean.toFixed(3)}, σ: ${displayStd.toFixed(3)}`;
-              document.getElementById('detectionThreshold').textContent = `Corr > ${thresholdVal.toFixed(3)} (5σ or 0.35 floor)`;
-              
-              console.log('🎯 BASELINE CALIBRATION COMPLETE:');
-              console.log(`  ├─ Noise Mean Correlation: ${baselineCorrelationMean.toFixed(3)}`);
-              console.log(`  ├─ Noise StdDev: ${baselineCorrelationStdDev.toFixed(3)}`);
-              console.log(`  ├─ Broadband Mean: ${baselineBroadbandMean.toFixed(1)} dB, σ: ${baselineBroadbandStdDev.toFixed(1)} dB`);
-              console.log(`  ├─ Energy Sum Baseline: ${baselineEnergySum.toFixed(1)} dB`);
-              console.log(`  ├─ Guard Lo Baseline: ${baselineGuardLo.toFixed(1)} dB, Guard Hi Baseline: ${baselineGuardHi.toFixed(1)} dB`);
-              console.log(`  └─ Detection threshold: ${(baselineCorrelationMean + 5 * baselineCorrelationStdDev).toFixed(3)} (mean + 5σ)`);
-              console.log('✅ NOW LISTENING FOR ENCODED SIGNAL...');
-              
-              // AUTO-START TX: Start transmitting encoded audio automatically
-              console.log('🚀 AUTO-STARTING TX (encoded audio)...');
-              console.log(`  ├─ Current txRunning state: ${txRunning}`);
-              console.log(`  ├─ audioContext exists: ${!!audioContext}`);
-              console.log(`  └─ Will call startTX() in 500ms...`);
-              
-              if (!txRunning) {
-                setTimeout(() => {
-                  console.log('⏰ Auto-start timeout fired - calling startTX()...');
-                  try {
-                    startTX();
-                    console.log('✅ TX AUTO-STARTED - Now testing with encoded audio');
-                  } catch (error) {
-                    console.error('❌ Auto-start failed:', error);
-                  }
-                }, 500); // Small delay to ensure RX is fully ready
-              } else {
-                console.log('⚠️ TX already running, skipping auto-start');
-              }
-            } else {
-              // Update UI during calibration
-              document.getElementById('baselineStatus').textContent = `Calibrating... ${baselineCalibrationSamples.length}/70`;
-              
-              // Log progress every 10 frames
-              if (baselineCalibrationSamples.length % 10 === 0) {
-                console.log(`📊 CALIBRATION PROGRESS: ${baselineCalibrationSamples.length}/70 samples collected`);
-              }
-            }
-            
-          // Update UI during calibration
-          document.getElementById('corrPeak').textContent = `${correlation.toFixed(3)} (cal)`;
-          document.getElementById('corrZScore').textContent = `${baselineCalibrationSamples.length}/70`;
-          document.getElementById('corrPSR').textContent = '—';
-          return; // Don't detect during calibration
-          }
           
           // NORMAL DETECTION (after calibration)
           // Compute Z-score using baseline stats
