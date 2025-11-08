@@ -2009,20 +2009,27 @@
           
           // ===== STATE: IDLE =====
           if (fsmState === 'IDLE') {
-            // SIMPLIFIED: Skip preamble detection, go straight to code detection if correlation is strong
-            if (correlation >= CORR_THRESHOLD * 0.6) { // 60% of threshold as trigger
+            // STRICTER TRIGGER: Require stronger correlation AND PSR to enter CODE_LOCK
+            const triggerCorr = correlation >= CORR_THRESHOLD * 0.8; // 80% of threshold (was 60%)
+            const triggerPSR = peakToSidelobeRatio >= PSR_THRESHOLD * 0.7; // 70% of PSR threshold
+            
+            if (triggerCorr && triggerPSR) {
               fsmState = 'CODE_LOCK';
               fsmStateStartTime = now;
               codeDetectionAttempts = [];
               codeRepeatTimestamps = [];
-              console.log(`🎵 FSM: IDLE → CODE_LOCK (correlation=${correlation.toFixed(3)} ≥ ${(CORR_THRESHOLD*0.6).toFixed(3)})`);
-              console.log(`  └─ Thresholds: corr≥${CORR_THRESHOLD}, psr≥${PSR_THRESHOLD}dB, z≥${Z_THRESHOLD}`);
+              window.detectionPolarities = [];
+              window.detectionHistory = [];
+              
+              console.log(`🎵 FSM: IDLE → CODE_LOCK`);
+              console.log(`  ├─ Trigger: corr=${correlation.toFixed(3)} ≥ ${(CORR_THRESHOLD*0.8).toFixed(3)}, psr=${peakToSidelobeRatio.toFixed(1)}dB ≥ ${(PSR_THRESHOLD*0.7).toFixed(1)}dB`);
+              console.log(`  └─ Required for unlock: 3 detections with consistent polarity & cadence`);
               updateFSMStateDisplay();
             }
             
             // Log IDLE state periodically to show we're alive
             if (frameCount % 180 === 0) {
-              console.log(`⏳ FSM: IDLE (waiting for signal... corr=${correlation.toFixed(3)}, z=${zScore.toFixed(2)})`);
+              console.log(`⏳ FSM: IDLE (waiting for signal... corr=${correlation.toFixed(3)}, psr=${peakToSidelobeRatio.toFixed(1)}dB, z=${zScore.toFixed(2)})`);
             }
           }
           
@@ -2090,32 +2097,91 @@
               console.log(`  └─ [guards] Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB (≤${GUARD_THRESHOLD}) ${guardsPass?'✅':'❌'}`);
             }
             
-            // CORE CRITERIA: correlation, PSR, Z-score must pass
+            // ANTI-FALSE-POSITIVE VALIDATION LAYERS
+            
+            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score)
             const corePass = corrPass && psrPass && zPass;
             
-            // OPTIONAL CRITERIA: median delta (often passes), energy balance (often fails with acoustic coupling)
-            // We'll log failures but not require them for unlock
+            // Layer 2: TX VALIDATION - TX must be running (prevent ambient noise unlock)
+            const txValidation = txRunning;
+            if (!txValidation) {
+              if (frameCount % 60 === 0) {
+                console.log(`  └─ ⚠️ TX not running - ignoring potential detection (prevents false positives)`);
+              }
+              return; // Don't even consider detections if TX is off
+            }
             
-            if (corePass) {
-              codeRepeatTimestamps.push(now);
-              console.log(`  ✅ CORE CRITERIA PASSED! Vote ${codeRepeatTimestamps.length}/2`);
+            // Layer 3: POLARITY CONSISTENCY - Check if detection has consistent sign pattern
+            if (!window.detectionPolarities) window.detectionPolarities = [];
+            const detectionPolarity = best.sign; // +1 or -1 from correlation
+            
+            // Layer 4: MEDIAN DELTA VALIDATION - Must have significant differential
+            const medianDeltaValidation = medianDelta >= MEDIAN_DELTA_THRESHOLD * 1.5; // 50% stricter
+            
+            if (corePass && medianDeltaValidation) {
+              // Store detection with metadata
+              const detection = {
+                time: now,
+                correlation: correlation,
+                polarity: detectionPolarity,
+                psr: peakToSidelobeRatio,
+                zScore: zScore,
+                medianDelta: medianDelta
+              };
               
-              // Need at least 2 detections with reasonable cadence
-              if (codeRepeatTimestamps.length >= 2) {
-                const lastTwo = codeRepeatTimestamps.slice(-2);
-                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
+              if (!window.detectionHistory) window.detectionHistory = [];
+              window.detectionHistory.push(detection);
+              
+              // Keep only recent history (last 10 seconds)
+              window.detectionHistory = window.detectionHistory.filter(d => now - d.time < 10);
+              
+              codeRepeatTimestamps.push(now);
+              window.detectionPolarities.push(detectionPolarity);
+              
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/3 (polarity: ${detectionPolarity > 0 ? '+' : '-'})`);
+              
+              // Layer 5: REQUIRE 3 DETECTIONS (not just 2) for higher confidence
+              if (codeRepeatTimestamps.length >= 3) {
+                // Layer 6: POLARITY CONSISTENCY CHECK - All 3 detections must have same polarity
+                const polarities = window.detectionPolarities.slice(-3);
+                const allSamePolarity = polarities.every(p => p === polarities[0]);
+                
+                if (!allSamePolarity) {
+                  console.log(`  └─ ❌ Polarity mismatch: [${polarities.join(', ')}] - likely noise, not encoded signal`);
+                  return;
+                }
+                
+                // Layer 7: CADENCE CONSISTENCY - All intervals must be similar (not just last 2)
+                const times = codeRepeatTimestamps.slice(-3);
+                const interval1 = (times[1] - times[0]) * 1000;
+                const interval2 = (times[2] - times[1]) * 1000;
                 const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
                 
-                // Very lenient cadence check: anywhere from 1 symbol to 2× code length
-                const minT = symbolMs * 0.5;
-                const maxT = expectedRepeatMs * 2.5;
-                const cadenceOk = deltaT >= minT && deltaT <= maxT;
+                // Check both intervals match expected repeat time (±30% tolerance)
+                const tolerance = 0.3;
+                const interval1Match = Math.abs(interval1 - expectedRepeatMs) <= expectedRepeatMs * tolerance;
+                const interval2Match = Math.abs(interval2 - expectedRepeatMs) <= expectedRepeatMs * tolerance;
+                const intervalsConsistent = Math.abs(interval1 - interval2) <= Math.max(interval1, interval2) * 0.4;
                 
-                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (valid range: ${minT.toFixed(0)}-${maxT.toFixed(0)}ms) ${cadenceOk?'✅':'❌'}`);
+                console.log(`  ├─ [cadence check]`);
+                console.log(`  │  ├─ Interval 1: ${interval1.toFixed(0)}ms vs expected ${expectedRepeatMs.toFixed(0)}ms ${interval1Match?'✅':'❌'}`);
+                console.log(`  │  ├─ Interval 2: ${interval2.toFixed(0)}ms vs expected ${expectedRepeatMs.toFixed(0)}ms ${interval2Match?'✅':'❌'}`);
+                console.log(`  │  └─ Consistency: |${interval1.toFixed(0)}-${interval2.toFixed(0)}|=${Math.abs(interval1-interval2).toFixed(0)}ms ${intervalsConsistent?'✅':'❌'}`);
+                
+                const cadenceOk = interval1Match && interval2Match && intervalsConsistent;
                 
                 if (cadenceOk) {
-                  // 🎉 UNLOCK!
+                  // Layer 8: CORRELATION STRENGTH VALIDATION - All 3 must be strong
+                  const recentCorrs = window.detectionHistory.slice(-3).map(d => d.correlation);
+                  const allStrongCorr = recentCorrs.every(c => c >= CORR_THRESHOLD);
+                  
+                  if (!allStrongCorr) {
+                    console.log(`  └─ ❌ Weak correlations: [${recentCorrs.map(c => c.toFixed(3)).join(', ')}]`);
+                    return;
+                  }
+                  
+                  // 🎉 ALL VALIDATION LAYERS PASSED - UNLOCK!
                   fsmState = 'UNLOCKED';
                   fsmLockoutUntil = now + COOLDOWN_DURATION;
                   presenceVerified = true;
@@ -2125,7 +2191,11 @@
                   badge.classList.add('verified');
                   
                   console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-                  console.log(`  └─ Encoded audio detected! Cooldown: ${COOLDOWN_DURATION}s`);
+                  console.log(`  ├─ ✅ All 8 validation layers passed!`);
+                  console.log(`  ├─ Detections: 3/3 with consistent polarity (${polarities[0] > 0 ? '+' : '-'})`);
+                  console.log(`  ├─ Cadence: ${interval1.toFixed(0)}ms, ${interval2.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms)`);
+                  console.log(`  ├─ Correlations: [${recentCorrs.map(c => c.toFixed(3)).join(', ')}]`);
+                  console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
                   updateFSMStateDisplay();
                   
                   // Reset to IDLE after cooldown
@@ -2133,6 +2203,8 @@
                     fsmState = 'IDLE';
                     fsmStateStartTime = audioContext.currentTime;
                     presenceVerified = false;
+                    window.detectionHistory = [];
+                    window.detectionPolarities = [];
                     const badge = document.getElementById('presenceBadge');
                     badge.textContent = '⏳ Listening...';
                     badge.classList.remove('verified');
@@ -2140,14 +2212,22 @@
                     updateFSMStateDisplay();
                   }, COOLDOWN_DURATION * 1000);
                 } else {
-                  console.log(`  └─ Cadence check failed - waiting for next detection`);
+                  console.log(`  └─ ❌ Cadence validation failed - not a valid encoded signal`);
+                  // Clear oldest detection to allow new pattern
+                  codeRepeatTimestamps.shift();
+                  window.detectionPolarities.shift();
                 }
               }
             } else {
-              // Log why core criteria failed
-              if (!corrPass) console.log(`  └─ ❌ Correlation too low: ${correlation.toFixed(3)} < ${CORR_THRESHOLD}`);
-              if (!psrPass) console.log(`  └─ ❌ PSR too low: ${peakToSidelobeRatio.toFixed(1)}dB < ${PSR_THRESHOLD}dB`);
-              if (!zPass) console.log(`  └─ ❌ Z-score too low: ${zScore.toFixed(2)} < ${Z_THRESHOLD}`);
+              // Log why validation failed
+              if (!corePass) {
+                if (!corrPass) console.log(`  └─ ❌ Correlation too low: ${correlation.toFixed(3)} < ${CORR_THRESHOLD}`);
+                if (!psrPass) console.log(`  └─ ❌ PSR too low: ${peakToSidelobeRatio.toFixed(1)}dB < ${PSR_THRESHOLD}dB`);
+                if (!zPass) console.log(`  └─ ❌ Z-score too low: ${zScore.toFixed(2)} < ${Z_THRESHOLD}`);
+              }
+              if (!medianDeltaValidation) {
+                console.log(`  └─ ❌ Median Δ too low: ${medianDelta.toFixed(2)}dB < ${(MEDIAN_DELTA_THRESHOLD*1.5).toFixed(2)}dB`);
+              }
             }
           }
           
