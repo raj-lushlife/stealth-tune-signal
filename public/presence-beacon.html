@@ -1649,7 +1649,7 @@
         if (spectralSymbolBuffer.length >= codeLen) {
           // Phase scan and polarity check
           const phaseMax = 7; // Check 8 phase offsets (better tolerance to jitter)
-          let best = { corr: -1, phase: 0, sign: 1 };
+          let best = { corr: -1, phase: 0, sign: 1, segment: [] };
           let allCorrelations = []; // For PSR calculation
           
           for (let p = 0; p <= phaseMax; p++) {
@@ -1661,10 +1661,11 @@
               const corr = Math.max(corrPos, corrNeg);
               const sign = corrNeg > corrPos ? -1 : 1;
               allCorrelations.push(corr);
-              if (corr > best.corr) best = { corr, phase: p, sign };
+              if (corr > best.corr) best = { corr, phase: p, sign, segment: seg };
             }
           }
           const correlation = best.corr;
+          const bestSegment = best.segment; // Phase-aligned segment that produced peak correlation
           
           // Compute Peak-to-Sidelobe Ratio (PSR)
           // Sidelobe = mean of all non-peak correlations
@@ -1899,7 +1900,8 @@
             }
             
             // Compute all detection metrics
-            const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
+            // CRITICAL: Use the phase-aligned segment that produced the peak correlation
+            const alignedDeltas = bestSegment.length === codeLen ? bestSegment : spectralSymbolBuffer.slice(-codeLen);
             
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
@@ -1910,8 +1912,8 @@
             // 3. Z-score check
             const zPass = zScore >= Z_THRESHOLD;
             
-            // 4. Median |Δ| check
-            const deltaAbs = recentDeltas.map(d => Math.abs(d));
+            // 4. Median |Δ| check (using phase-aligned segment)
+            const deltaAbs = alignedDeltas.map(d => Math.abs(d));
             const medianDelta = deltaAbs.length > 0 
               ? deltaAbs.sort((a,b) => a-b)[Math.floor(deltaAbs.length/2)]
               : 0;
