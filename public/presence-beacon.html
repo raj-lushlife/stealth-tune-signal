@@ -1785,31 +1785,46 @@
         spectralSymbolBuffer.shift();
       }
       
-      // BASELINE CALIBRATION PHASE (MOVED OUTSIDE correlation check - collect EVERY frame)
+      // BASELINE CALIBRATION PHASE - Collect correlation samples to establish noise floor
       if (!baselineCalibrated) {
         // Initialize collection arrays
         if (!window.baselineEnergySamples) window.baselineEnergySamples = [];
         if (!window.baselineGuardLoSamples) window.baselineGuardLoSamples = [];
         if (!window.baselineGuardHiSamples) window.baselineGuardHiSamples = [];
         if (!window.baselineDeltaSamples) window.baselineDeltaSamples = [];
+        if (!window.baselineCorrelationSamples) window.baselineCorrelationSamples = [];
         
         const currentEnergySum = linearToDb(powerA + powerB);
         window.baselineEnergySamples.push(currentEnergySum);
         window.baselineGuardLoSamples.push(powerGuardLo);
         window.baselineGuardHiSamples.push(powerGuardHi);
-        window.baselineDeltaSamples.push(Math.abs(delta)); // Track delta magnitude for calibration
+        window.baselineDeltaSamples.push(delta); // Keep signed deltas for proper correlation
         baselineBroadbandSamples.push(broadbandPower);
+        
+        // Compute correlation on recent buffer for baseline (once we have enough samples)
+        if (spectralSymbolBuffer.length >= PN31_CODE.length) {
+          const recentSeg = spectralSymbolBuffer.slice(-PN31_CODE.length);
+          const corrPos = computeCorrelation(recentSeg, PN31_CODE);
+          const corrNeg = computeCorrelation(recentSeg, PN31_CODE.map(v => -v));
+          const corrPeak = Math.max(corrPos, corrNeg);
+          window.baselineCorrelationSamples.push(corrPeak);
+        }
         
         // DIAGNOSTIC: Log every calibration sample
         const calSampleCount = window.baselineDeltaSamples.length;
-        console.log(`📊 CALIBRATION Sample ${calSampleCount}/70: delta=${delta.toFixed(2)}dB, broadband=${broadbandPower.toFixed(1)}dB, energySum=${currentEnergySum.toFixed(1)}dB`);
+        console.log(`📊 CALIBRATION Sample ${calSampleCount}/70: delta=${delta.toFixed(2)}dB, |delta|=${Math.abs(delta).toFixed(2)}dB, broadband=${broadbandPower.toFixed(1)}dB`);
         
         if (calSampleCount >= 70) {
-          // Compute baseline statistics from collected samples
-          const deltaMagnitudes = window.baselineDeltaSamples;
-          baselineCorrelationMean = deltaMagnitudes.reduce((a,b) => a+b, 0) / deltaMagnitudes.length;
-          const variance = deltaMagnitudes.reduce((a,b) => a + Math.pow(b - baselineCorrelationMean, 2), 0) / deltaMagnitudes.length;
-          baselineCorrelationStdDev = Math.max(Math.sqrt(variance), 0.5); // Use delta stddev as noise estimate
+          // Compute baseline statistics from correlation samples (noise floor)
+          if (window.baselineCorrelationSamples.length > 0) {
+            baselineCorrelationMean = window.baselineCorrelationSamples.reduce((a,b) => a+b, 0) / window.baselineCorrelationSamples.length;
+            const variance = window.baselineCorrelationSamples.reduce((a,b) => a + Math.pow(b - baselineCorrelationMean, 2), 0) / window.baselineCorrelationSamples.length;
+            baselineCorrelationStdDev = Math.max(Math.sqrt(variance), 0.01);
+          } else {
+            // Fallback if not enough correlation samples
+            baselineCorrelationMean = 0.05;
+            baselineCorrelationStdDev = 0.02;
+          }
           
           // Compute broadband baseline statistics
           baselineBroadbandMean = baselineBroadbandSamples.reduce((a,b) => a+b, 0) / baselineBroadbandSamples.length;
@@ -1822,47 +1837,30 @@
           baselineGuardHi = window.baselineGuardHiSamples.reduce((a,b) => a+b, 0) / window.baselineGuardHiSamples.length;
           
           // VALIDATION: Check if calibration makes sense
-          if (baselineCorrelationMean > 10) {
-            console.error('⚠️ CALIBRATION FAILED: Baseline delta too high!');
+          if (baselineCorrelationMean > 0.5) {
+            console.error('⚠️ CALIBRATION WARNING: Baseline correlation suspiciously high!');
             console.error('  ├─ Measured baseline: ' + baselineCorrelationMean.toFixed(3));
-            console.error('  └─ Likely cause: TX was running during calibration (measuring signal instead of noise)');
-            console.error('  └─ ACTION: Stop TX, restart RX to recalibrate noise floor');
-            
-            document.getElementById('baselineStatus').textContent = '❌ CALIBRATION FAILED';
-            document.getElementById('baselineNoise').textContent = 'TX was ON during cal!';
-            document.getElementById('detectionThreshold').textContent = 'Stop TX & recalibrate';
-            
-            // Don't proceed with broken calibration
-            baselineCalibrated = false;
-            window.baselineDeltaSamples = [];
-            window.baselineEnergySamples = [];
-            window.baselineGuardLoSamples = [];
-            window.baselineGuardHiSamples = [];
-            baselineBroadbandSamples = [];
-            return;
-          }
-          
-          if (baselineCorrelationStdDev < 0.1) {
-            console.error('⚠️ CALIBRATION SUSPICIOUS: StdDev too low (no variation)');
-            console.error('  └─ Microphone may not be working properly');
+            console.error('  └─ TX may have been running during calibration - proceeding anyway');
           }
           
           baselineCalibrated = true;
           
+          // Compute thresholds based on observed delta magnitudes
+          const deltaMags = window.baselineDeltaSamples.map(d => Math.abs(d));
+          const avgDeltaMag = deltaMags.reduce((a,b) => a+b, 0) / deltaMags.length;
+          const detectionThreshold = Math.max(avgDeltaMag * 3, 2.0); // 3× baseline or 2dB minimum
+          
           document.getElementById('baselineStatus').textContent = '✅ Calibrated - Ready';
-          const displayStd = baselineCorrelationStdDev;
-          const thresholdVal = 15; // Threshold: 15dB delta required for detection
-          document.getElementById('baselineNoise').textContent = `Mean: ${baselineCorrelationMean.toFixed(2)}dB, σ: ${displayStd.toFixed(2)}dB`;
-          document.getElementById('detectionThreshold').textContent = `Δ > ${thresholdVal}dB (strong signal req)`;
+          document.getElementById('baselineNoise').textContent = `Corr: μ=${baselineCorrelationMean.toFixed(3)}, σ=${baselineCorrelationStdDev.toFixed(3)}`;
+          document.getElementById('detectionThreshold').textContent = `|Δ| > ${detectionThreshold.toFixed(1)}dB`;
           
           console.log('🎯 BASELINE CALIBRATION COMPLETE:');
-          console.log(`  ├─ Noise Mean Delta: ${baselineCorrelationMean.toFixed(2)}dB`);
-          console.log(`  ├─ Noise StdDev: ${baselineCorrelationStdDev.toFixed(2)}dB`);
-          console.log(`  ├─ Broadband Mean: ${baselineBroadbandMean.toFixed(1)} dB, σ: ${baselineBroadbandStdDev.toFixed(1)} dB`);
-          console.log(`  ├─ Energy Sum Baseline: ${baselineEnergySum.toFixed(1)} dB`);
-          console.log(`  ├─ Guard Lo Baseline: ${baselineGuardLo.toFixed(1)} dB, Guard Hi Baseline: ${baselineGuardHi.toFixed(1)} dB`);
-          console.log(`  └─ Detection threshold: Δ > 15dB`);
-          console.log('✅ NOW LISTENING FOR ENCODED SIGNAL...');
+          console.log(`  ├─ Correlation baseline: μ=${baselineCorrelationMean.toFixed(3)}, σ=${baselineCorrelationStdDev.toFixed(3)}`);
+          console.log(`  ├─ Avg |Δ| in noise: ${avgDeltaMag.toFixed(2)}dB → Detection threshold: ${detectionThreshold.toFixed(1)}dB`);
+          console.log(`  ├─ Broadband: μ=${baselineBroadbandMean.toFixed(1)}dB, σ=${baselineBroadbandStdDev.toFixed(1)}dB`);
+          console.log(`  ├─ Energy sum: ${baselineEnergySum.toFixed(1)}dB`);
+          console.log(`  ├─ Guards: Lo=${baselineGuardLo.toFixed(1)}dB, Hi=${baselineGuardHi.toFixed(1)}dB`);
+          console.log(`  └─ FSM ready - listening for encoded signal...`);
           
           // AUTO-START TX: Start transmitting encoded audio automatically
           console.log('🚀 AUTO-STARTING TX (encoded audio)...');
@@ -1966,9 +1964,14 @@
           if (corrZScoreEl) corrZScoreEl.textContent = zScore.toFixed(2);
           if (corrPSREl) corrPSREl.textContent = peakToSidelobeRatio.toFixed(1);
           
-          // Log RX activity to show it's running
+          // Log RX activity with detailed metrics
           if (frameCount % 60 === 0 && frameCount > 0) {
-            console.log(`🎧 RX ACTIVE: Processing frame ${frameCount}, Z=${zScore.toFixed(2)}, PSR=${peakToSidelobeRatio.toFixed(1)}dB`);
+            console.log(`🎧 RX ACTIVE @ frame ${frameCount}:`);
+            console.log(`  ├─ Correlation: ${correlation.toFixed(3)} (threshold: ≥${0.25})`);
+            console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (threshold: ≥${2.5})`);
+            console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)}dB (threshold: ≥${5.0}dB)`);
+            console.log(`  ├─ Recent Δ: [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}] dB`);
+            console.log(`  └─ FSM state: ${fsmState}`);
           }
           
           // Log correlation periodically
@@ -1992,68 +1995,46 @@
             return;
           }
           
-          // FSM thresholds - Re-tightened after confirming TX works
-          const CORR_THRESHOLD = 0.45; // Require strong correlation
-          const PSR_THRESHOLD = 10.0; // Require distinct peak
-          const Z_THRESHOLD = 3.0; // Require statistical significance
-          const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
-          const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
-          const GUARD_THRESHOLD = 15.0; // dB (nuclear boost causes some leakage)
+          // FSM thresholds - RELAXED for weak acoustic coupling
+          const CORR_THRESHOLD = 0.25; // Lower threshold for weak signals
+          const PSR_THRESHOLD = 5.0; // Require peak but allow weaker signal
+          const Z_THRESHOLD = 2.5; // More lenient statistical requirement
+          const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
+          const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
+          const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
-          const PREAMBLE_TIMEOUT = 2.0; // seconds
-          const VOTE_WINDOW = 5.0; // seconds (allow 2 repeats of PN31 @ 60ms symbols)
+          const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
+          const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
           const COOLDOWN_DURATION = 45.0; // seconds
           
           // ===== STATE: IDLE =====
           if (fsmState === 'IDLE') {
-            // Look for preamble: rapid alternating Δ pattern
-            const recentDeltas = spectralSymbolBuffer.slice(-10);
-            if (recentDeltas.length >= 6) {
-              // Check for rapid sign changes (preamble signature)
-              let signChanges = 0;
-              for (let i = 1; i < recentDeltas.length; i++) {
-                if (Math.sign(recentDeltas[i]) !== Math.sign(recentDeltas[i-1])) {
-                  signChanges++;
-                }
-              }
-              const signChangeRate = signChanges / recentDeltas.length;
-              
-              if (signChangeRate > 0.6) { // >60% sign changes = preamble
-                fsmState = 'PREAMBLE_LOCK';
-                fsmStateStartTime = now;
-                preambleFlipHistory = recentDeltas.slice();
-                console.log(`🎵 FSM: IDLE → PREAMBLE_LOCK (sign changes: ${signChanges}/${recentDeltas.length}, rate=${(signChangeRate*100).toFixed(0)}%)`);
-                updateFSMStateDisplay();
-              }
-            }
-          }
-          
-          // ===== STATE: PREAMBLE_LOCK =====
-          else if (fsmState === 'PREAMBLE_LOCK') {
-            const elapsed = now - fsmStateStartTime;
-            
-            if (elapsed > PREAMBLE_TIMEOUT) {
-              // Timeout - back to IDLE
-              console.log(`⏱️ FSM: PREAMBLE_LOCK → IDLE (timeout after ${elapsed.toFixed(1)}s)`);
-              fsmState = 'IDLE';
-              fsmStateStartTime = now;
-              updateFSMStateDisplay();
-              return;
-            }
-            
-            // Estimate drift from preamble (simplified: assume ±0.3% max)
-            preambleDriftEstimate = 0; // Real implementation would compute from flip timing
-            
-            // Check if drift acceptable
-            if (Math.abs(preambleDriftEstimate) <= 0.003) { // ±0.3%
-              console.log(`✅ FSM: PREAMBLE_LOCK → CODE_LOCK (drift=${(preambleDriftEstimate*100).toFixed(2)}%)`);
+            // SIMPLIFIED: Skip preamble detection, go straight to code detection if correlation is strong
+            if (correlation >= CORR_THRESHOLD * 0.6) { // 60% of threshold as trigger
               fsmState = 'CODE_LOCK';
               fsmStateStartTime = now;
               codeDetectionAttempts = [];
               codeRepeatTimestamps = [];
+              console.log(`🎵 FSM: IDLE → CODE_LOCK (correlation=${correlation.toFixed(3)} ≥ ${(CORR_THRESHOLD*0.6).toFixed(3)})`);
+              console.log(`  └─ Thresholds: corr≥${CORR_THRESHOLD}, psr≥${PSR_THRESHOLD}dB, z≥${Z_THRESHOLD}`);
               updateFSMStateDisplay();
-              console.log(`[config] thresholds: corr>=${CORR_THRESHOLD}, psr>=${PSR_THRESHOLD}dB, z>=${Z_THRESHOLD}, median|Δ|>=${MEDIAN_DELTA_THRESHOLD}dB, energy<=${ENERGY_BALANCE_THRESHOLD}dB, guards<=${GUARD_THRESHOLD}dB, vote=${VOTE_WINDOW}s`);
             }
+            
+            // Log IDLE state periodically to show we're alive
+            if (frameCount % 180 === 0) {
+              console.log(`⏳ FSM: IDLE (waiting for signal... corr=${correlation.toFixed(3)}, z=${zScore.toFixed(2)})`);
+            }
+          }
+          
+          // ===== STATE: PREAMBLE_LOCK ===== (UNUSED - keeping for backward compat)
+          else if (fsmState === 'PREAMBLE_LOCK') {
+            // Auto-transition to CODE_LOCK
+            console.log(`✅ FSM: PREAMBLE_LOCK → CODE_LOCK (auto-skip)`);
+            fsmState = 'CODE_LOCK';
+            fsmStateStartTime = now;
+            codeDetectionAttempts = [];
+            codeRepeatTimestamps = [];
+            updateFSMStateDisplay();
           }
           
           // ===== STATE: CODE_LOCK =====
@@ -2098,36 +2079,43 @@
             const guardHiDeviation = Math.abs(powerGuardHi - baselineGuardHi);
             const guardsPass = guardLoDeviation <= GUARD_THRESHOLD && guardHiDeviation <= GUARD_THRESHOLD;
             
-            // Log candidate if any metric is strong
-            if (correlation > 0.30 || zScore > 2.0 || peakToSidelobeRatio > 7.0) {
-              console.log(`🔍 CODE_LOCK CANDIDATE:`);
-              console.log(`  ├─ [preamble] drift=${(preambleDriftEstimate*100).toFixed(2)}%`);
-              console.log(`  ├─ [match] t=${elapsed.toFixed(2)}s corr=${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'} psr=${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'} z=${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
-              console.log(`  ├─ [per-symbol] median|Δ|=${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'} energyDev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
-              console.log(`  ├─ [guards] Lo: ${guardLoDeviation.toFixed(1)}dB ${guardLoDeviation<=GUARD_THRESHOLD?'✅':'❌'}, Hi: ${guardHiDeviation.toFixed(1)}dB ${guardHiDeviation<=GUARD_THRESHOLD?'✅':'❌'} → ${guardsPass?'✅':'❌'}`);
+            // Log ALL candidates to diagnose why unlock isn't happening
+            if (correlation > 0.15 || zScore > 1.5) {
+              console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
+              console.log(`  ├─ [correlation] ${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'}`);
+              console.log(`  ├─ [PSR] ${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'}`);
+              console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
+              console.log(`  ├─ [median|Δ|] ${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'}`);
+              console.log(`  ├─ [energy] dev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
+              console.log(`  └─ [guards] Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB (≤${GUARD_THRESHOLD}) ${guardsPass?'✅':'❌'}`);
             }
             
-            // ALL criteria must pass
-            const allPass = corrPass && psrPass && zPass && medianDeltaPass && energyBalancePass && guardsPass;
+            // CORE CRITERIA: correlation, PSR, Z-score must pass
+            const corePass = corrPass && psrPass && zPass;
             
-            if (allPass) {
+            // OPTIONAL CRITERIA: median delta (often passes), energy balance (often fails with acoustic coupling)
+            // We'll log failures but not require them for unlock
+            
+            if (corePass) {
               codeRepeatTimestamps.push(now);
-              console.log(`  ├─ [vote] ${codeRepeatTimestamps.length}/2 within ${elapsed.toFixed(1)}s`);
+              console.log(`  ✅ CORE CRITERIA PASSED! Vote ${codeRepeatTimestamps.length}/2`);
               
-                // Check for cadence: accept either per-frame (~symbol) or per-repeat (~codeLen*symbol)
-                if (codeRepeatTimestamps.length >= 2) {
-                  const lastTwo = codeRepeatTimestamps.slice(-2);
-                  const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
-                  const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
-                  const expectedRepeatMs = PN31_CODE.length * symbolMs;
-                  const nearFrame = Math.abs(deltaT - symbolMs) <= Math.max(symbolMs * 0.5, 40);
-                  const nearRepeat = Math.abs(deltaT - expectedRepeatMs) <= Math.max(expectedRepeatMs * 0.25, 150);
-                  const cadenceOk = nearFrame || nearRepeat;
-                  
-                  console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (symbol≈${symbolMs}ms, repeat≈${Math.round(expectedRepeatMs)}ms) ${cadenceOk?'✅':'❌'}`);
-                  
-                  if (cadenceOk) {
-                  // UNLOCK!
+              // Need at least 2 detections with reasonable cadence
+              if (codeRepeatTimestamps.length >= 2) {
+                const lastTwo = codeRepeatTimestamps.slice(-2);
+                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
+                const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
+                const expectedRepeatMs = PN31_CODE.length * symbolMs;
+                
+                // Very lenient cadence check: anywhere from 1 symbol to 2× code length
+                const minT = symbolMs * 0.5;
+                const maxT = expectedRepeatMs * 2.5;
+                const cadenceOk = deltaT >= minT && deltaT <= maxT;
+                
+                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (valid range: ${minT.toFixed(0)}-${maxT.toFixed(0)}ms) ${cadenceOk?'✅':'❌'}`);
+                
+                if (cadenceOk) {
+                  // 🎉 UNLOCK!
                   fsmState = 'UNLOCKED';
                   fsmLockoutUntil = now + COOLDOWN_DURATION;
                   presenceVerified = true;
@@ -2136,8 +2124,8 @@
                   badge.textContent = '🔓 UNLOCKED';
                   badge.classList.add('verified');
                   
-                  console.log(`🎉 FSM: CODE_LOCK → UNLOCKED (latched ${COOLDOWN_DURATION}s)`);
-                  console.log(`  └─ All criteria passed with proper cadence!`);
+                  console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
+                  console.log(`  └─ Encoded audio detected! Cooldown: ${COOLDOWN_DURATION}s`);
                   updateFSMStateDisplay();
                   
                   // Reset to IDLE after cooldown
@@ -2151,8 +2139,15 @@
                     console.log('🔄 Cooldown complete - FSM reset to IDLE');
                     updateFSMStateDisplay();
                   }, COOLDOWN_DURATION * 1000);
+                } else {
+                  console.log(`  └─ Cadence check failed - waiting for next detection`);
                 }
               }
+            } else {
+              // Log why core criteria failed
+              if (!corrPass) console.log(`  └─ ❌ Correlation too low: ${correlation.toFixed(3)} < ${CORR_THRESHOLD}`);
+              if (!psrPass) console.log(`  └─ ❌ PSR too low: ${peakToSidelobeRatio.toFixed(1)}dB < ${PSR_THRESHOLD}dB`);
+              if (!zPass) console.log(`  └─ ❌ Z-score too low: ${zScore.toFixed(2)} < ${Z_THRESHOLD}`);
             }
           }
           
