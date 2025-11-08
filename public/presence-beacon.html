@@ -506,9 +506,17 @@
               <label>Burst Interval (s):</label>
               <input type="number" id="spectralBurstInterval" value="8" min="2" max="15" step="1">
             </div>
+            <div class="control-group">
+              <label>🔥 Beacon Boost (dB):</label>
+              <input type="number" id="beaconBoost" value="4.5" min="0" max="10" step="0.5">
+            </div>
+            <div class="control-group">
+              <label>Pre-Emphasis (12-14kHz):</label>
+              <input type="number" id="preEmphasis" value="2.0" min="0" max="6" step="0.5">
+            </div>
           </div>
           <div class="readout">
-            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. Default ±6.5dB balances detectability and subtlety; lower for imperceptible encoding.
+            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. <strong>Beacon Boost</strong> raises amplitude 3-6dB above mix. <strong>Pre-Emphasis</strong> shelf-boosts 12-14kHz for better penetration.
           </div>
         </div>
 
@@ -616,8 +624,52 @@
           <div class="warning-banner show" style="background: #2196F3; color: white; display: block;">
             ⚠️ Start RX FIRST (before TX) to calibrate noise baseline!
           </div>
+          
           <div class="subsection">
-            <h3>Correlation Detection</h3>
+            <h3>🎛️ Detection Tuning</h3>
+            <div class="grid-2col">
+              <div class="control-group">
+                <label>Floor Clamp (dB):</label>
+                <input type="number" id="floorClamp" value="8.0" min="5" max="15" step="0.5">
+              </div>
+              <div class="control-group">
+                <label>Min Hold (ms):</label>
+                <input type="number" id="minHoldMs" value="250" min="100" max="1000" step="50">
+              </div>
+              <div class="control-group">
+                <label>Min Drop (ms):</label>
+                <input type="number" id="minDropMs" value="400" min="100" max="1000" step="50">
+              </div>
+              <div class="control-group">
+                <label>Window (ms):</label>
+                <input type="number" id="windowMs" value="500" min="200" max="2000" step="100">
+              </div>
+            </div>
+            <div class="readout">
+              🎯 <strong>Floor Clamp:</strong> Min SNR (dB). <strong>Min Hold:</strong> Time above SNR before trigger. <strong>Min Drop:</strong> Hysteresis after loss. <strong>Window:</strong> Rolling avg length.
+            </div>
+          </div>
+          
+          <div class="subsection">
+            <h3>📊 Live SNR & Decision Trace</h3>
+            <div class="band-display">
+              <div class="band-meter">
+                <div class="label">Live SNR</div>
+                <div class="value" id="liveSNR">—</div>
+              </div>
+              <div class="band-meter">
+                <div class="label">Noise Floor</div>
+                <div class="value" id="noiseFloor">—</div>
+              </div>
+              <div class="band-meter">
+                <div class="label">Decision</div>
+                <div class="value" id="decision">—</div>
+              </div>
+              <div class="band-meter">
+                <div class="label">Hold Timer</div>
+                <div class="value" id="holdTimer">—</div>
+              </div>
+            </div>
             <div class="band-display">
               <div class="band-meter">
                 <div class="label">Correlation Peak</div>
@@ -779,6 +831,13 @@
     let fsmStateStartTime = 0;
     let fsmLockoutUntil = 0; // 45s cooldown after UNLOCKED
     
+    // SNR tracking with hysteresis
+    let snrHistory = []; // Rolling window for SNR computation
+    let noiseFloorEMA = -100; // Adaptive noise floor (median-filtered, clamped)
+    let signalAboveThresholdStartTime = 0; // When signal first exceeded SNR threshold
+    let signalBelowThresholdStartTime = 0; // When signal first dropped below SNR threshold
+    let presenceState = false; // true = present, false = not present (with hysteresis)
+    
     // Preamble detection
     let preambleDetectionStart = 0;
     let preambleDriftEstimate = 0;
@@ -888,9 +947,15 @@
         b6 = white * 0.115926;
       }
       
-      // Boost base level for better audibility
+      // Boost base level for better audibility (2x from original 0.15 = +6dB)
+      const baseMultiplier = 0.5; // Already boosted from 0.15
+      // Apply additional beacon boost from slider
+      const beaconBoostDb = parseFloat(document.getElementById('beaconBoost')?.value || 4.5);
+      const beaconBoostLinear = dbToLinear(beaconBoostDb);
+      const totalMultiplier = baseMultiplier * beaconBoostLinear;
+      
       for (let i = 0; i < length; i++) {
-        output[i] *= 0.5;
+        output[i] *= totalMultiplier;
       }
       
       // Calculate and log RMS level
@@ -1040,6 +1105,20 @@
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
       
+      // Add pre-emphasis shelf EQ for 12-14kHz band (BEFORE spectral filters)
+      const preEmphasisDb = parseFloat(document.getElementById('preEmphasis')?.value || 2.0);
+      let currentNode = bedSource;
+      
+      if (preEmphasisDb > 0) {
+        const preEmphasisShelf = audioContext.createBiquadFilter();
+        preEmphasisShelf.type = 'highshelf';
+        preEmphasisShelf.frequency.value = 12000; // Start boosting at 12kHz
+        preEmphasisShelf.gain.value = preEmphasisDb;
+        currentNode.connect(preEmphasisShelf);
+        currentNode = preEmphasisShelf;
+        console.log(`🔊 PRE-EMPHASIS APPLIED: +${preEmphasisDb}dB shelf at 12kHz`);
+      }
+      
       // Create two narrow peaking filters for bins A and B
       // Q=50 gives ~240Hz bandwidth at 12kHz - optimal balance
       const filterA = audioContext.createBiquadFilter();
@@ -1056,11 +1135,11 @@
       
       spectralFilters = { binA: filterA, binB: filterB };
       
-      // Connect: source -> filterA -> filterB -> masterGain -> destination
+      // Connect: source -> [preEmphasis] -> filterA -> filterB -> masterGain -> destination
       const outputGainDb = parseFloat(document.getElementById('outputGain').value);
       masterGain.gain.value = dbToLinear(outputGainDb);
       
-      bedSource.connect(filterA);
+      currentNode.connect(filterA);
       filterA.connect(filterB);
       filterB.connect(masterGain);
       
@@ -1534,6 +1613,13 @@
       spectralBroadbandEMA = -100;
       spectralConsecutiveHits = 0;
       
+      // Reset SNR tracking
+      snrHistory = [];
+      noiseFloorEMA = -100;
+      signalAboveThresholdStartTime = 0;
+      signalBelowThresholdStartTime = 0;
+      presenceState = false;
+      
       // Reset baseline calibration
       baselineCalibrated = false;
       baselineCalibrationSamples = [];
@@ -1620,6 +1706,82 @@
       // Compute broadband for display
       const broadbandPower = computeBandPower(dataArray, binHz, 1000, 15000);
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
+      
+      // ========== SNR TRACKING WITH ADAPTIVE NOISE FLOOR ==========
+      // Get tuning parameters
+      const floorClampDb = parseFloat(document.getElementById('floorClamp')?.value || 8.0);
+      const minHoldMs = parseFloat(document.getElementById('minHoldMs')?.value || 250);
+      const minDropMs = parseFloat(document.getElementById('minDropMs')?.value || 400);
+      const windowMs = parseFloat(document.getElementById('windowMs')?.value || 500);
+      
+      // Compute signal strength (use correlation as proxy for beacon strength)
+      const signalStrength = energyAB; // dB - combined A+B energy
+      
+      // Update rolling SNR history (keep ~windowMs worth of samples)
+      const maxSamples = Math.ceil(windowMs / symbolDurationMs);
+      snrHistory.push(signalStrength);
+      if (snrHistory.length > maxSamples) snrHistory.shift();
+      
+      // Compute noise floor using median filter (rejects transient peaks)
+      let noiseFloorCandidate = -100;
+      if (snrHistory.length >= Math.min(10, maxSamples / 2)) {
+        const sorted = [...snrHistory].sort((a,b) => a - b);
+        const medianIdx = Math.floor(sorted.length * 0.25); // 25th percentile = noise floor
+        noiseFloorCandidate = sorted[medianIdx];
+      }
+      
+      // Apply EMA smoothing to noise floor
+      const floorAlpha = 0.1; // Slow adaptation
+      if (noiseFloorEMA < -90) noiseFloorEMA = noiseFloorCandidate;
+      noiseFloorEMA = noiseFloorEMA * (1 - floorAlpha) + noiseFloorCandidate * floorAlpha;
+      
+      // Compute live SNR
+      const liveSNR = signalStrength - noiseFloorEMA;
+      
+      // Update display
+      document.getElementById('liveSNR').textContent = liveSNR.toFixed(1) + ' dB';
+      document.getElementById('noiseFloor').textContent = noiseFloorEMA.toFixed(1) + ' dB';
+      
+      // Decision logic with hysteresis
+      const now = audioContext.currentTime;
+      const nowMs = now * 1000;
+      
+      if (liveSNR >= floorClampDb) {
+        // Signal above threshold
+        if (signalAboveThresholdStartTime === 0) {
+          signalAboveThresholdStartTime = nowMs;
+        }
+        signalBelowThresholdStartTime = 0; // Reset drop timer
+        
+        const aboveDuration = nowMs - signalAboveThresholdStartTime;
+        if (aboveDuration >= minHoldMs && !presenceState) {
+          presenceState = true;
+          console.log(`🟢 PRESENCE DETECTED: SNR=${liveSNR.toFixed(1)}dB held for ${aboveDuration.toFixed(0)}ms (threshold: ${minHoldMs}ms)`);
+        }
+        
+        document.getElementById('holdTimer').textContent = `↑${aboveDuration.toFixed(0)}ms`;
+        document.getElementById('decision').textContent = presenceState ? '🟢 PRESENT' : '⏳ RISING';
+      } else {
+        // Signal below threshold
+        if (signalBelowThresholdStartTime === 0) {
+          signalBelowThresholdStartTime = nowMs;
+        }
+        signalAboveThresholdStartTime = 0; // Reset rise timer
+        
+        const belowDuration = nowMs - signalBelowThresholdStartTime;
+        if (belowDuration >= minDropMs && presenceState) {
+          presenceState = false;
+          console.log(`🔴 PRESENCE LOST: SNR=${liveSNR.toFixed(1)}dB below for ${belowDuration.toFixed(0)}ms (hysteresis: ${minDropMs}ms)`);
+        }
+        
+        document.getElementById('holdTimer').textContent = `↓${belowDuration.toFixed(0)}ms`;
+        document.getElementById('decision').textContent = presenceState ? '⏳ FALLING' : '🔴 ABSENT';
+      }
+      
+      // Log SNR trace periodically
+      if (frameCount % 30 === 0 && frameCount > 0) {
+        console.log(`📊 SNR TRACE: signal=${signalStrength.toFixed(1)}dB, floor=${noiseFloorEMA.toFixed(1)}dB, SNR=${liveSNR.toFixed(1)}dB, state=${presenceState?'PRESENT':'ABSENT'}, decision=${liveSNR>=floorClampDb?'ABOVE':'BELOW'} threshold`);
+      }
       
       // Detailed logging every 20 frames (~1.2s at 60ms symbols)
       const frameCount = spectralSymbolBuffer.length;
