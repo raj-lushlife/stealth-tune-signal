@@ -1803,12 +1803,13 @@
           // ✅ CHECKPOINT: Working configuration (encoded unlocks, unencoded fails)
           // Encoded: corr=0.410, psr=9.7dB, z=4.61 → UNLOCK
           // Unencoded: corr=0.28-0.31, psr=7-8dB, z=0.81-1.10 → REJECT (z-score blocks)
+          // Loudness veto is primary defense against clapping
           const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
-          const PSR_THRESHOLD = 9.0; // raised to reject broadband/aperiodic noise
-          const Z_THRESHOLD = 4.0; // stronger discrimination vs. loud broadband events
+          const PSR_THRESHOLD = 7.5; // relaxed to allow encoded audio (loudness veto handles clapping)
+          const Z_THRESHOLD = 3.0; // relaxed to allow encoded audio
           const MEDIAN_DELTA_THRESHOLD = 0.8; // dB - raised to ensure real modulation
-          const ENERGY_BALANCE_THRESHOLD = 0.6; // dB - tightened to reject loud transients
-          const GUARD_THRESHOLD = 3.0; // dB - tightened to ensure spectral isolation
+          const ENERGY_BALANCE_THRESHOLD = 0.8; // dB - relaxed slightly
+          const GUARD_THRESHOLD = 4.0; // dB - relaxed to allow encoded audio
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 2.0; // seconds
           const VOTE_WINDOW = 5.0; // seconds (allow 2 repeats of PN31 @ 60ms symbols)
