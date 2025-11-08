@@ -1632,6 +1632,7 @@
         console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz`);
         console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB, Δ: ${delta.toFixed(2)}dB`);
         console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, EMA: ${spectralBroadbandEMA.toFixed(2)}dB, Veto: ${loudnessVeto}`);
+        console.log(`  ├─ Last 4 deltas: [${spectralSymbolBuffer.slice(-4).map(d => d.toFixed(2)).join(', ')}]`);
         console.log(`  └─ Buffer size: ${spectralSymbolBuffer.length}/${PN31_CODE.length}`);
       }
       
@@ -1785,7 +1786,8 @@
             console.log(`  ├─ Peak: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (baseline: μ=${baselineCorrelationMean.toFixed(3)}, σ=${baselineCorrelationStdDev.toFixed(3)})`);
             console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB`);
-            console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
+            console.log(`  ├─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
+            console.log(`  └─ Delta stats: min=${Math.min(...spectralSymbolBuffer.slice(-31)).toFixed(2)}, max=${Math.max(...spectralSymbolBuffer.slice(-31)).toFixed(2)}, range=${(Math.max(...spectralSymbolBuffer.slice(-31)) - Math.min(...spectralSymbolBuffer.slice(-31))).toFixed(2)}dB`);
           }
           
           // ========== FSM STATE MACHINE ==========
@@ -1937,6 +1939,7 @@
               console.log(`  ├─ [preamble] drift=${(preambleDriftEstimate*100).toFixed(2)}%`);
               console.log(`  ├─ [match] t=${elapsed.toFixed(2)}s corr=${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'} psr=${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'} z=${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
               console.log(`  ├─ [per-symbol] median|Δ|=${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'} energyDev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
+              console.log(`  ├─ [aligned Δ stats] min=${Math.min(...alignedDeltas).toFixed(2)}dB, max=${Math.max(...alignedDeltas).toFixed(2)}dB, range=${(Math.max(...alignedDeltas) - Math.min(...alignedDeltas)).toFixed(2)}dB, median=${segMedian.toFixed(2)}dB`);
               console.log(`  ├─ [guards] Lo: ${guardLoDeviation.toFixed(1)}dB ${guardLoDeviation<=GUARD_THRESHOLD?'✅':'❌'}, Hi: ${guardHiDeviation.toFixed(1)}dB ${guardHiDeviation<=GUARD_THRESHOLD?'✅':'❌'} → ${guardsPass?'✅':'❌'}`);
             }
             
