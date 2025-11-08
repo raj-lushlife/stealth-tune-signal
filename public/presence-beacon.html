@@ -1862,12 +1862,10 @@
           console.log(`  ├─ Guards: Lo=${baselineGuardLo.toFixed(1)}dB, Hi=${baselineGuardHi.toFixed(1)}dB`);
           console.log(`  └─ FSM ready - listening for encoded signal...`);
           
-          // AUTO-START TX: Start transmitting encoded audio automatically
-          console.log('🚀 AUTO-STARTING TX (encoded audio)...');
-          console.log(`  ├─ Current txRunning state: ${txRunning}`);
-          console.log(`  ├─ audioContext exists: ${!!audioContext}`);
-          console.log(`  └─ Will call startTX() in 500ms...`);
-          
+          // AUTO-START TX: DISABLED for manual testing
+          console.log('ℹ️ Auto-start TX disabled - use "Start TX" button manually');
+          // Uncomment below to re-enable auto-start after calibration:
+          /*
           if (!txRunning) {
             setTimeout(() => {
               console.log('⏰ Auto-start timeout fired - calling startTX()...');
@@ -1877,10 +1875,9 @@
               } catch (error) {
                 console.error('❌ Auto-start failed:', error);
               }
-            }, 500); // Small delay to ensure RX is fully ready
-          } else {
-            console.log('⚠️ TX already running, skipping auto-start');
+            }, 500);
           }
+          */
         } else {
           // Update UI during calibration
           document.getElementById('baselineStatus').textContent = `Calibrating... ${calSampleCount}/70`;
