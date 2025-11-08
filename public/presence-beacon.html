@@ -1611,16 +1611,22 @@
       // Compute differential (in dB)
       const delta = powerB - powerA;
       
-      // Compute broadband RMS for loudness veto (1-15kHz)
+      // Compute broadband RMS for loudness veto (1-15kHz), excluding narrow windows around A/B to avoid penalizing encoded signal
       const broadbandPower = computeBandPower(dataArray, binHz, 1000, 15000);
+      const powerAwin = computeBandPower(dataArray, binHz, freqA - 2*binHz, freqA + 2*binHz);
+      const powerBwin = computeBandPower(dataArray, binHz, freqB - 2*binHz, freqB + 2*binHz);
+      // Subtract A/B windows in linear domain, clamp to very small positive to avoid -Inf
+      const bbLin = dbToLinear(broadbandPower);
+      const exclLin = Math.max(bbLin - dbToLinear(powerAwin) - dbToLinear(powerBwin), 1e-12);
+      const broadbandExclAB = linearToDb(exclLin);
       
       // Update broadband EMA (200ms time constant at 60ms symbol rate)
       const alpha = 0.3; // ~200ms EMA
-      spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
+      spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandExclAB * alpha;
       
       // Loudness veto: Block frames with sudden broadband energy spikes (clapping, loud transients)
-      // This prevents false detection from non-encoded loud sounds
-      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 10) && baselineCalibrated;
+      // Evaluate using broadband excluding the encoded tones
+      const loudnessVeto = (broadbandExclAB - spectralBroadbandEMA > 10) && baselineCalibrated;
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
@@ -1629,9 +1635,7 @@
       const frameCount = spectralSymbolBuffer.length;
       if (frameCount % 20 === 0 && frameCount > 0) {
         console.log(`🎯 SPECTRAL RX @ frame ${frameCount}:`);
-        console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz`);
-        console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB, Δ: ${delta.toFixed(2)}dB`);
-        console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, EMA: ${spectralBroadbandEMA.toFixed(2)}dB, Veto: ${loudnessVeto}`);
+        console.log(`  ├─ Broadband(excl A/B): ${broadbandExclAB.toFixed(2)}dB, EMA: ${spectralBroadbandEMA.toFixed(2)}dB, Veto: ${loudnessVeto}`);
         console.log(`  ├─ Last 4 deltas: [${spectralSymbolBuffer.slice(-4).map(d => d.toFixed(2)).join(', ')}]`);
         console.log(`  └─ Buffer size: ${spectralSymbolBuffer.length}/${PN31_CODE.length}`);
       }
@@ -1995,9 +1999,9 @@
           // (Nothing to do here - just wait for cooldown to expire)
         }
       } else {
-        const vetoJump = broadbandPower - spectralBroadbandEMA;
+        const vetoJump = broadbandExclAB - spectralBroadbandEMA;
         if (vetoJump > 10) {
-          console.log(`⚠️ Loudness veto active: broadband=${broadbandPower.toFixed(2)}dB, EMA=${spectralBroadbandEMA.toFixed(2)}dB, jump=${vetoJump.toFixed(2)}dB (>10dB threshold)`);
+          console.log(`⚠️ Loudness veto active: broadbandExclAB=${broadbandExclAB.toFixed(2)}dB, EMA=${spectralBroadbandEMA.toFixed(2)}dB, jump=${vetoJump.toFixed(2)}dB (>10dB threshold)`);
         }
       }
     }
