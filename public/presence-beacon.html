@@ -1623,9 +1623,15 @@
       // Reset baseline calibration
       baselineCalibrated = false;
       baselineCalibrationSamples = [];
+      baselineBroadbandSamples = [];
       baselineEnergySum = -100;
       baselineGuardLo = -100;
       baselineGuardHi = -100;
+      
+      // Reset baseline sample collectors
+      window.baselineEnergySamples = [];
+      window.baselineGuardLoSamples = [];
+      window.baselineGuardHiSamples = [];
       
       // Reset guard EMA tracking for temporal smoothing
       window.guardLoEMA = -100;
