@@ -1618,8 +1618,9 @@
       const alpha = 0.3; // ~200ms EMA
       spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
       
-      // Loudness veto: DISABLED (was blocking too many valid frames)
-      const loudnessVeto = false; // (broadbandPower - spectralBroadbandEMA > 18);
+      // Loudness veto: Block frames with sudden broadband energy spikes (clapping, loud transients)
+      // This prevents false detection from non-encoded loud sounds
+      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 15) && baselineCalibrated;
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
@@ -1803,11 +1804,11 @@
           // Encoded: corr=0.410, psr=9.7dB, z=4.61 → UNLOCK
           // Unencoded: corr=0.28-0.31, psr=7-8dB, z=0.81-1.10 → REJECT (z-score blocks)
           const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
-          const PSR_THRESHOLD = 7.5;
-          const Z_THRESHOLD = 2.5;
-          const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
-          const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
-          const GUARD_THRESHOLD = 10.0; // dB (guards pick up TX leakage at close range)
+          const PSR_THRESHOLD = 8.0; // raised to reject broadband noise
+          const Z_THRESHOLD = 3.5; // raised to require strong signal above noise floor
+          const MEDIAN_DELTA_THRESHOLD = 0.8; // dB - raised to ensure real modulation
+          const ENERGY_BALANCE_THRESHOLD = 0.6; // dB - tightened to reject loud transients
+          const GUARD_THRESHOLD = 3.0; // dB - tightened to ensure spectral isolation
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 2.0; // seconds
           const VOTE_WINDOW = 5.0; // seconds (allow 2 repeats of PN31 @ 60ms symbols)
@@ -1815,7 +1816,7 @@
           
           // ===== STATE: IDLE =====
           if (fsmState === 'IDLE') {
-            // Look for preamble: rapid alternating Δ pattern
+            // Look for preamble: rapid alternating Δ pattern with controlled amplitude
             const recentDeltas = spectralSymbolBuffer.slice(-10);
             if (recentDeltas.length >= 6) {
               // Check for rapid sign changes (preamble signature)
@@ -1827,11 +1828,16 @@
               }
               const signChangeRate = signChanges / recentDeltas.length;
               
-              if (signChangeRate > 0.6) { // >60% sign changes = preamble
+              // Also check that deltas are in reasonable range (not just noise or loud transients)
+              const avgAbsDelta = recentDeltas.reduce((sum, d) => sum + Math.abs(d), 0) / recentDeltas.length;
+              const deltaInRange = avgAbsDelta >= 0.5 && avgAbsDelta <= 6.0; // Must have modulation but not excessive
+              
+              // Require both high sign change rate AND reasonable delta amplitude
+              if (signChangeRate > 0.6 && deltaInRange) { // >60% sign changes = preamble
                 fsmState = 'PREAMBLE_LOCK';
                 fsmStateStartTime = now;
                 preambleFlipHistory = recentDeltas.slice();
-                console.log(`🎵 FSM: IDLE → PREAMBLE_LOCK (sign changes: ${signChanges}/${recentDeltas.length}, rate=${(signChangeRate*100).toFixed(0)}%)`);
+                console.log(`🎵 FSM: IDLE → PREAMBLE_LOCK (sign changes: ${signChanges}/${recentDeltas.length}, rate=${(signChangeRate*100).toFixed(0)}%, avgΔ=${avgAbsDelta.toFixed(2)}dB)`);
                 updateFSMStateDisplay();
               }
             }
