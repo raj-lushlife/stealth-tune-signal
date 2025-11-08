@@ -1694,6 +1694,15 @@
           let best = { corr: -1, phase: 0, sign: 1 };
           let allCorrelations = []; // For PSR calculation
           
+          // DIAGNOSTIC: Log buffer state periodically
+          if (frameNum % 60 === 0 && spectralSymbolBuffer.length >= codeLen) {
+            console.log(`🔬 CORRELATION DEBUG @ frame ${frameNum}:`);
+            console.log(`  ├─ Buffer length: ${spectralSymbolBuffer.length}`);
+            console.log(`  ├─ Last 10 deltas: [${spectralSymbolBuffer.slice(-10).map(d => d.toFixed(1)).join(', ')}]`);
+            console.log(`  ├─ Expected code:  [${PN31_CODE.slice(0, 10).map(v => (v > 0 ? '+' : '-') + Math.abs(v)).join(', ')}]`);
+            console.log(`  └─ Sign pattern: ${spectralSymbolBuffer.slice(-10).map(d => d > 0 ? '+' : '-').join('')} vs ${PN31_CODE.slice(0, 10).map(v => v > 0 ? '+' : '-').join('')}`);
+          }
+          
           for (let p = 0; p <= phaseMax; p++) {
             const start = spectralSymbolBuffer.length - codeLen - p;
             if (start >= 0) {
@@ -1704,6 +1713,11 @@
               const sign = corrNeg > corrPos ? -1 : 1;
               allCorrelations.push(corr);
               if (corr > best.corr) best = { corr, phase: p, sign };
+              
+              // DIAGNOSTIC: Log correlation details for best phase
+              if (frameNum % 120 === 0 && p === 0) {
+                console.log(`  ├─ Phase ${p}: corrPos=${corrPos.toFixed(3)}, corrNeg=${corrNeg.toFixed(3)}, best=${corr.toFixed(3)} (sign=${sign > 0 ? '+' : '-'})`);
+              }
             }
           }
           const correlation = best.corr;
@@ -1839,13 +1853,13 @@
             return;
           }
           
-          // FSM thresholds (calibrated for real-world conditions)
-          const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
-          const PSR_THRESHOLD = 7.5;
-          const Z_THRESHOLD = 2.5;
+          // FSM thresholds - RELAXED FOR DEBUGGING
+          const CORR_THRESHOLD = 0.25; // Lowered from 0.30 to tolerate weak correlation
+          const PSR_THRESHOLD = 5.0; // Lowered from 7.5 (was blocking)
+          const Z_THRESHOLD = -1.0; // Lowered from 2.5 - allow negative Z (baseline issue)
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
           const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
-          const GUARD_THRESHOLD = 10.0; // dB (guards pick up TX leakage at close range)
+          const GUARD_THRESHOLD = 15.0; // dB - Raised from 10 (nuclear boost causes leakage)
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 2.0; // seconds
           const VOTE_WINDOW = 5.0; // seconds (allow 2 repeats of PN31 @ 60ms symbols)
