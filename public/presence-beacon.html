@@ -1620,7 +1620,7 @@
       
       // Loudness veto: Block frames with sudden broadband energy spikes (clapping, loud transients)
       // This prevents false detection from non-encoded loud sounds
-      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 15) && baselineCalibrated;
+      const loudnessVeto = (broadbandPower - spectralBroadbandEMA > 10) && baselineCalibrated;
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
@@ -1683,10 +1683,10 @@
             if (!window.baselineGuardLoSamples) window.baselineGuardLoSamples = [];
             if (!window.baselineGuardHiSamples) window.baselineGuardHiSamples = [];
             
-            const currentEnergySum = linearToDb(powerA + powerB);
+            const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
             window.baselineEnergySamples.push(currentEnergySum);
-            window.baselineGuardLoSamples.push(powerGuardLo);
-            window.baselineGuardHiSamples.push(powerGuardHi);
+            window.baselineGuardLoSamples.push(powerGuardLoRaw);
+            window.baselineGuardHiSamples.push(powerGuardHiRaw);
             
             if (baselineCalibrationSamples.length >= 70) {
               // Compute baseline statistics
@@ -1804,8 +1804,8 @@
           // Encoded: corr=0.410, psr=9.7dB, z=4.61 → UNLOCK
           // Unencoded: corr=0.28-0.31, psr=7-8dB, z=0.81-1.10 → REJECT (z-score blocks)
           const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
-          const PSR_THRESHOLD = 8.0; // raised to reject broadband noise
-          const Z_THRESHOLD = 3.5; // raised to require strong signal above noise floor
+          const PSR_THRESHOLD = 9.0; // raised to reject broadband/aperiodic noise
+          const Z_THRESHOLD = 4.0; // stronger discrimination vs. loud broadband events
           const MEDIAN_DELTA_THRESHOLD = 0.8; // dB - raised to ensure real modulation
           const ENERGY_BALANCE_THRESHOLD = 0.6; // dB - tightened to reject loud transients
           const GUARD_THRESHOLD = 3.0; // dB - tightened to ensure spectral isolation
@@ -1904,13 +1904,13 @@
             const medianDeltaPass = medianDelta >= MEDIAN_DELTA_THRESHOLD;
             
             // 5. Energy balance check: |(E(A)+E(B)) - baseline| ≤ 1.0 dB
-            const currentEnergySum = linearToDb(powerA + powerB);
+            const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
             const energyDeviation = Math.abs(currentEnergySum - baselineEnergySum);
             const energyBalancePass = energyDeviation <= ENERGY_BALANCE_THRESHOLD;
             
             // 6. Guard stability check
-            const guardLoDeviation = Math.abs(powerGuardLo - baselineGuardLo);
-            const guardHiDeviation = Math.abs(powerGuardHi - baselineGuardHi);
+            const guardLoDeviation = Math.abs(powerGuardLoRaw - baselineGuardLo);
+            const guardHiDeviation = Math.abs(powerGuardHiRaw - baselineGuardHi);
             const guardsPass = guardLoDeviation <= GUARD_THRESHOLD && guardHiDeviation <= GUARD_THRESHOLD;
             
             // Log candidate if any metric is strong
@@ -1935,11 +1935,10 @@
                   const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
                   const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                   const expectedRepeatMs = PN31_CODE.length * symbolMs;
-                  const nearFrame = Math.abs(deltaT - symbolMs) <= Math.max(symbolMs * 0.5, 40);
-                  const nearRepeat = Math.abs(deltaT - expectedRepeatMs) <= Math.max(expectedRepeatMs * 0.25, 150);
-                  const cadenceOk = nearFrame || nearRepeat;
+                  const nearRepeat = Math.abs(deltaT - expectedRepeatMs) <= Math.max(expectedRepeatMs * 0.15, 120);
+                  const cadenceOk = nearRepeat;
                   
-                  console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (symbol≈${symbolMs}ms, repeat≈${Math.round(expectedRepeatMs)}ms) ${cadenceOk?'✅':'❌'}`);
+                  console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (require repeat≈${Math.round(expectedRepeatMs)}ms only) ${cadenceOk?'✅':'❌'}`);
                   
                   if (cadenceOk) {
                   // UNLOCK!
@@ -1976,7 +1975,9 @@
         }
       } else {
         const vetoJump = broadbandPower - spectralBroadbandEMA;
-        console.log(`⚠️ Loudness veto active: broadband=${broadbandPower.toFixed(2)}dB, EMA=${spectralBroadbandEMA.toFixed(2)}dB, jump=${vetoJump.toFixed(2)}dB (>12dB threshold)`);
+        if (vetoJump > 10) {
+          console.log(`⚠️ Loudness veto active: broadband=${broadbandPower.toFixed(2)}dB, EMA=${spectralBroadbandEMA.toFixed(2)}dB, jump=${vetoJump.toFixed(2)}dB (>10dB threshold)`);
+        }
       }
     }
     
