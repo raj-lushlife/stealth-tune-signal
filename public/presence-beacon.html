@@ -320,6 +320,40 @@
       color: #4CAF50;
       font-family: 'Courier New', monospace;
     }
+
+    .log-console {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 16px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .log-console .log-entry {
+      margin: 2px 0;
+      color: #aaa;
+    }
+
+    .log-console .log-entry.success {
+      color: #4CAF50;
+    }
+
+    .log-console .log-entry.error {
+      color: #f44336;
+    }
+
+    .log-console .log-entry.warning {
+      color: #ff9800;
+    }
+
+    .log-console .log-entry.info {
+      color: #2196F3;
+    }
   </style>
 </head>
 <body>
@@ -731,9 +765,72 @@
         </div>
       </div>
     </div>
+
+    <!-- Live Log Console -->
+    <div class="container" style="margin-top: 24px;">
+      <div class="section">
+        <h2>📋 Live Debug Console</h2>
+        <div class="log-console" id="liveLogConsole">
+          <div class="log-entry">Waiting for system to start...</div>
+        </div>
+        <button class="btn btn-secondary" onclick="document.getElementById('liveLogConsole').innerHTML = '';">Clear Logs</button>
+      </div>
+    </div>
   </div>
 
   <script>
+    // ==================== LOG INTERCEPTOR ====================
+    const logConsole = [];
+    const MAX_LOGS = 200;
+    const originalConsoleLog = console.log;
+    const originalConsoleError = console.error;
+    const originalConsoleWarn = console.warn;
+
+    function addLogToUI(message, type = 'info') {
+      const consoleEl = document.getElementById('liveLogConsole');
+      if (!consoleEl) return;
+
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = message;
+      
+      consoleEl.appendChild(entry);
+      
+      // Auto-scroll to bottom
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+      
+      // Limit log entries
+      while (consoleEl.children.length > MAX_LOGS) {
+        consoleEl.removeChild(consoleEl.firstChild);
+      }
+    }
+
+    console.log = function(...args) {
+      const message = args.join(' ');
+      originalConsoleLog.apply(console, args);
+      
+      let type = 'info';
+      if (message.includes('✅') || message.includes('🎉')) type = 'success';
+      else if (message.includes('❌') || message.includes('⚠️')) type = 'error';
+      else if (message.includes('🔍') || message.includes('📊')) type = 'info';
+      
+      addLogToUI(message, type);
+    };
+
+    console.error = function(...args) {
+      const message = args.join(' ');
+      originalConsoleError.apply(console, args);
+      addLogToUI(message, 'error');
+    };
+
+    console.warn = function(...args) {
+      const message = args.join(' ');
+      originalConsoleWarn.apply(console, args);
+      addLogToUI(message, 'warning');
+    };
+
+    console.log('Presence Beacon loaded. Click "Start Audio" to begin.');
+    
     // ==================== GLOBAL STATE ====================
     let audioContext = null;
     let masterGain = null;
@@ -990,15 +1087,26 @@
     // ==================== TX: ENCODER ====================
     
     async function startTX() {
-      if (txRunning) return;
+      console.log('🎬 startTX() called');
+      console.log(`  ├─ txRunning: ${txRunning}`);
+      console.log(`  ├─ audioContext: ${!!audioContext}`);
+      console.log(`  └─ currentMode: ${currentMode}`);
+      
+      if (txRunning) {
+        console.log('⚠️ TX already running, returning');
+        return;
+      }
       
       if (!audioContext) {
+        console.error('❌ No audioContext - please click "Start Audio" first');
         alert('Please click "Start Audio" first');
         return;
       }
       
       if (audioContext.state === 'suspended') {
+        console.log('⏸️ AudioContext suspended, resuming...');
         await audioContext.resume();
+        console.log(`✅ AudioContext resumed, state: ${audioContext.state}`);
       }
 
       if (currentMode === 'spectral') {
@@ -1625,9 +1733,10 @@
       // DIAGNOSTIC: Show real-time FFT visualization for first 100 frames
       if (frameNum <= 100) {
         const getContext = (idx) => {
-          const before = [dataArray[idx-2], dataArray[idx-1]].map(v => v?.toFixed(1) || '-∞');
-          const center = dataArray[idx]?.toFixed(1) || '-∞';
-          const after = [dataArray[idx+1], dataArray[idx+2]].map(v => v?.toFixed(1) || '-∞');
+          const safeVal = (v) => (v != null && isFinite(v)) ? v.toFixed(1) : '-200.0';
+          const before = [dataArray[idx-2], dataArray[idx-1]].map(safeVal);
+          const center = safeVal(dataArray[idx]);
+          const after = [dataArray[idx+1], dataArray[idx+2]].map(safeVal);
           return `[${before.join(',')},(${center}),${after.join(',')}]`;
         };
         console.log(`  ├─ Bin A [${binIndexA}] @ ${freqA}Hz: ${getContext(binIndexA)} dB`);
@@ -1805,15 +1914,31 @@
               
               // AUTO-START TX: Start transmitting encoded audio automatically
               console.log('🚀 AUTO-STARTING TX (encoded audio)...');
+              console.log(`  ├─ Current txRunning state: ${txRunning}`);
+              console.log(`  ├─ audioContext exists: ${!!audioContext}`);
+              console.log(`  └─ Will call startTX() in 500ms...`);
+              
               if (!txRunning) {
                 setTimeout(() => {
-                  startTX();
-                  console.log('✅ TX AUTO-STARTED - Now testing with encoded audio');
+                  console.log('⏰ Auto-start timeout fired - calling startTX()...');
+                  try {
+                    startTX();
+                    console.log('✅ TX AUTO-STARTED - Now testing with encoded audio');
+                  } catch (error) {
+                    console.error('❌ Auto-start failed:', error);
+                  }
                 }, 500); // Small delay to ensure RX is fully ready
+              } else {
+                console.log('⚠️ TX already running, skipping auto-start');
               }
             } else {
               // Update UI during calibration
               document.getElementById('baselineStatus').textContent = `Calibrating... ${baselineCalibrationSamples.length}/70`;
+              
+              // Log progress every 10 frames
+              if (baselineCalibrationSamples.length % 10 === 0) {
+                console.log(`📊 CALIBRATION PROGRESS: ${baselineCalibrationSamples.length}/70 samples collected`);
+              }
             }
             
           // Update UI during calibration
