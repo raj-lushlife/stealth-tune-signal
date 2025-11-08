@@ -1992,10 +1992,10 @@
             return;
           }
           
-          // FSM thresholds - RELAXED for weak acoustic coupling
-          const CORR_THRESHOLD = 0.25; // Lower threshold for weak signals
-          const PSR_THRESHOLD = 5.0; // Require peak but allow weaker signal
-          const Z_THRESHOLD = 2.5; // More lenient statistical requirement
+          // FSM thresholds - TIGHTENED to reduce false positives
+          const CORR_THRESHOLD = 0.30; // Raised from 0.25 to reject ambient noise
+          const PSR_THRESHOLD = 6.0; // Raised from 5.0 for better signal quality
+          const Z_THRESHOLD = 3.0; // Raised from 2.5 (false positive had 2.53)
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
@@ -2156,7 +2156,12 @@
                 const polarityConsistent = polarities[0] === polarities[1];
                 console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
                 
-                if (cadenceOk) {
+                // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
+                const detections = window.detectionHistory.slice(-2);
+                const allTxOn = detections.every(d => d.txWasRunning);
+                console.log(`  ├─ [TX validation] ${allTxOn ? '✅ TX was ON' : '❌ TX was OFF - BLOCKING UNLOCK'}`);
+                
+                if (cadenceOk && allTxOn) {
                   // 🎉 UNLOCK!
                   fsmState = 'UNLOCKED';
                   fsmLockoutUntil = now + COOLDOWN_DURATION;
@@ -2167,22 +2172,16 @@
                   badge.classList.add('verified');
                   
                   // Log detection quality for analysis
-                  const detections = window.detectionHistory.slice(-2);
-                  const allTxOn = detections.every(d => d.txWasRunning);
-                  
                   console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
                   console.log(`  ├─ Detections: 2/2 (interval: ${deltaT.toFixed(0)}ms)`);
                   console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
                   console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
-                  console.log(`  ├─ TX status: ${allTxOn ? '✅ ON for both' : '⚠️ OFF during detection'}`);
+                  console.log(`  ├─ TX validation: ✅ TX was ON for all detections`);
                   console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
                   
-                  // Warning if suspicious
-                  if (!allTxOn) {
-                    console.warn(`⚠️⚠️⚠️ SUSPICIOUS UNLOCK: TX was off - likely false positive! ⚠️⚠️⚠️`);
-                  }
+                  // Warning if mixed polarity (diagnostic only)
                   if (!polarityConsistent) {
-                    console.warn(`⚠️ Mixed polarity - may not be genuine encoded signal`);
+                    console.warn(`⚠️ Mixed polarity detected - signal may have interference`);
                   }
                   
                   updateFSMStateDisplay();
@@ -2200,6 +2199,12 @@
                     console.log('🔄 Cooldown complete - FSM reset to IDLE');
                     updateFSMStateDisplay();
                   }, COOLDOWN_DURATION * 1000);
+                } else if (!allTxOn) {
+                  // TX was off - reject as false positive
+                  console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
+                  // Clear oldest detection to allow new pattern
+                  codeRepeatTimestamps.shift();
+                  window.detectionPolarities.shift();
                 } else {
                   console.log(`  └─ ❌ Cadence check failed - waiting for next detection`);
                   // Clear oldest detection to allow new pattern
