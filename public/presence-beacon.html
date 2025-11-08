@@ -506,17 +506,9 @@
               <label>Burst Interval (s):</label>
               <input type="number" id="spectralBurstInterval" value="8" min="2" max="15" step="1">
             </div>
-            <div class="control-group">
-              <label>🔥 Beacon Boost (dB):</label>
-              <input type="number" id="beaconBoost" value="4.5" min="0" max="10" step="0.5">
-            </div>
-            <div class="control-group">
-              <label>Pre-Emphasis (12-14kHz):</label>
-              <input type="number" id="preEmphasis" value="2.0" min="0" max="6" step="0.5">
-            </div>
           </div>
           <div class="readout">
-            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. <strong>Beacon Boost</strong> raises amplitude 3-6dB above mix. <strong>Pre-Emphasis</strong> shelf-boosts 12-14kHz for better penetration.
+            💡 Beacon uses differential A/B encoding at 12kHz with PN-31 code. Bursts every 8s. Default ±6.5dB balances detectability and subtlety; lower for imperceptible encoding.
           </div>
         </div>
 
@@ -624,52 +616,8 @@
           <div class="warning-banner show" style="background: #2196F3; color: white; display: block;">
             ⚠️ Start RX FIRST (before TX) to calibrate noise baseline!
           </div>
-          
           <div class="subsection">
-            <h3>🎛️ Detection Tuning</h3>
-            <div class="grid-2col">
-              <div class="control-group">
-                <label>Floor Clamp (dB):</label>
-                <input type="number" id="floorClamp" value="8.0" min="5" max="15" step="0.5">
-              </div>
-              <div class="control-group">
-                <label>Min Hold (ms):</label>
-                <input type="number" id="minHoldMs" value="250" min="100" max="1000" step="50">
-              </div>
-              <div class="control-group">
-                <label>Min Drop (ms):</label>
-                <input type="number" id="minDropMs" value="400" min="100" max="1000" step="50">
-              </div>
-              <div class="control-group">
-                <label>Window (ms):</label>
-                <input type="number" id="windowMs" value="500" min="200" max="2000" step="100">
-              </div>
-            </div>
-            <div class="readout">
-              🎯 <strong>Floor Clamp:</strong> Min SNR (dB). <strong>Min Hold:</strong> Time above SNR before trigger. <strong>Min Drop:</strong> Hysteresis after loss. <strong>Window:</strong> Rolling avg length.
-            </div>
-          </div>
-          
-          <div class="subsection">
-            <h3>📊 Live SNR & Decision Trace</h3>
-            <div class="band-display">
-              <div class="band-meter">
-                <div class="label">Live SNR</div>
-                <div class="value" id="liveSNR">—</div>
-              </div>
-              <div class="band-meter">
-                <div class="label">Noise Floor</div>
-                <div class="value" id="noiseFloor">—</div>
-              </div>
-              <div class="band-meter">
-                <div class="label">Decision</div>
-                <div class="value" id="decision">—</div>
-              </div>
-              <div class="band-meter">
-                <div class="label">Hold Timer</div>
-                <div class="value" id="holdTimer">—</div>
-              </div>
-            </div>
+            <h3>Correlation Detection</h3>
             <div class="band-display">
               <div class="band-meter">
                 <div class="label">Correlation Peak</div>
@@ -831,13 +779,6 @@
     let fsmStateStartTime = 0;
     let fsmLockoutUntil = 0; // 45s cooldown after UNLOCKED
     
-    // SNR tracking with hysteresis
-    let snrHistory = []; // Rolling window for SNR computation
-    let noiseFloorEMA = -100; // Adaptive noise floor (median-filtered, clamped)
-    let signalAboveThresholdStartTime = 0; // When signal first exceeded SNR threshold
-    let signalBelowThresholdStartTime = 0; // When signal first dropped below SNR threshold
-    let presenceState = false; // true = present, false = not present (with hysteresis)
-    
     // Preamble detection
     let preambleDetectionStart = 0;
     let preambleDriftEstimate = 0;
@@ -947,15 +888,9 @@
         b6 = white * 0.115926;
       }
       
-      // Boost base level for better audibility (2x from original 0.15 = +6dB)
-      const baseMultiplier = 0.5; // Already boosted from 0.15
-      // Apply additional beacon boost from slider
-      const beaconBoostDb = parseFloat(document.getElementById('beaconBoost')?.value || 4.5);
-      const beaconBoostLinear = dbToLinear(beaconBoostDb);
-      const totalMultiplier = baseMultiplier * beaconBoostLinear;
-      
+      // Low level for demo
       for (let i = 0; i < length; i++) {
-        output[i] *= totalMultiplier;
+        output[i] *= 0.15;
       }
       
       // Calculate and log RMS level
@@ -1105,20 +1040,6 @@
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
       
-      // Add pre-emphasis shelf EQ for 12-14kHz band (BEFORE spectral filters)
-      const preEmphasisDb = parseFloat(document.getElementById('preEmphasis')?.value || 2.0);
-      let currentNode = bedSource;
-      
-      if (preEmphasisDb > 0) {
-        const preEmphasisShelf = audioContext.createBiquadFilter();
-        preEmphasisShelf.type = 'highshelf';
-        preEmphasisShelf.frequency.value = 12000; // Start boosting at 12kHz
-        preEmphasisShelf.gain.value = preEmphasisDb;
-        currentNode.connect(preEmphasisShelf);
-        currentNode = preEmphasisShelf;
-        console.log(`🔊 PRE-EMPHASIS APPLIED: +${preEmphasisDb}dB shelf at 12kHz`);
-      }
-      
       // Create two narrow peaking filters for bins A and B
       // Q=50 gives ~240Hz bandwidth at 12kHz - optimal balance
       const filterA = audioContext.createBiquadFilter();
@@ -1135,11 +1056,11 @@
       
       spectralFilters = { binA: filterA, binB: filterB };
       
-      // Connect: source -> [preEmphasis] -> filterA -> filterB -> masterGain -> destination
+      // Connect: source -> filterA -> filterB -> masterGain -> destination
       const outputGainDb = parseFloat(document.getElementById('outputGain').value);
       masterGain.gain.value = dbToLinear(outputGainDb);
       
-      currentNode.connect(filterA);
+      bedSource.connect(filterA);
       filterA.connect(filterB);
       filterB.connect(masterGain);
       
@@ -1595,7 +1516,7 @@
       
       analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048; // 2048 @ 48kHz = ~43Hz bins, ~21ms hop
-      analyser.smoothingTimeConstant = 0; // No smoothing - capture rapid A/B flips fully
+      analyser.smoothingTimeConstant = 0.3; // Moderate smoothing
       
       micSource.connect(hpf);
       hpf.connect(analyser);
@@ -1613,25 +1534,12 @@
       spectralBroadbandEMA = -100;
       spectralConsecutiveHits = 0;
       
-      // Reset SNR tracking
-      snrHistory = [];
-      noiseFloorEMA = -100;
-      signalAboveThresholdStartTime = 0;
-      signalBelowThresholdStartTime = 0;
-      presenceState = false;
-      
       // Reset baseline calibration
       baselineCalibrated = false;
       baselineCalibrationSamples = [];
-      baselineBroadbandSamples = [];
       baselineEnergySum = -100;
       baselineGuardLo = -100;
       baselineGuardHi = -100;
-      
-      // Reset baseline sample collectors
-      window.baselineEnergySamples = [];
-      window.baselineGuardLoSamples = [];
-      window.baselineGuardHiSamples = [];
       
       // Reset guard EMA tracking for temporal smoothing
       window.guardLoEMA = -100;
@@ -1703,153 +1611,81 @@
       // Compute differential (in dB)
       const delta = powerB - powerA;
       
-      // Compute A/B to Guard energy ratio for false-positive rejection
-      // Encoded signal: high A+B, low guards. Random noise: all high.
-      const energyAB = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
-      const energyGuards = linearToDb(dbToLinear(powerGuardLo) + dbToLinear(powerGuardHi));
-      const abToGuardRatio = energyAB - energyGuards; // dB ratio
-      
-      // Compute broadband for display
+      // Compute broadband RMS for loudness veto (1-15kHz)
       const broadbandPower = computeBandPower(dataArray, binHz, 1000, 15000);
-      document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
       
-      // ========== SNR TRACKING WITH ADAPTIVE NOISE FLOOR ==========
-      // Get tuning parameters
-      const floorClampDb = parseFloat(document.getElementById('floorClamp')?.value || 8.0);
-      const minHoldMs = parseFloat(document.getElementById('minHoldMs')?.value || 250);
-      const minDropMs = parseFloat(document.getElementById('minDropMs')?.value || 400);
-      const windowMs = parseFloat(document.getElementById('windowMs')?.value || 500);
+      // Update broadband EMA (200ms time constant at 60ms symbol rate)
+      const alpha = 0.3; // ~200ms EMA
+      spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
       
-      // Compute signal strength (use correlation as proxy for beacon strength)
-      const signalStrength = energyAB; // dB - combined A+B energy
-      
-      // Update rolling SNR history (keep ~windowMs worth of samples)
-      const maxSamples = Math.ceil(windowMs / symbolDurationMs);
-      snrHistory.push(signalStrength);
-      if (snrHistory.length > maxSamples) snrHistory.shift();
-      
-      // Compute noise floor using median filter (rejects transient peaks)
-      let noiseFloorCandidate = -100;
-      if (snrHistory.length >= Math.min(10, maxSamples / 2)) {
-        const sorted = [...snrHistory].sort((a,b) => a - b);
-        const medianIdx = Math.floor(sorted.length * 0.25); // 25th percentile = noise floor
-        noiseFloorCandidate = sorted[medianIdx];
-      }
-      
-      // Apply EMA smoothing to noise floor
-      const floorAlpha = 0.1; // Slow adaptation
-      if (noiseFloorEMA < -90) noiseFloorEMA = noiseFloorCandidate;
-      noiseFloorEMA = noiseFloorEMA * (1 - floorAlpha) + noiseFloorCandidate * floorAlpha;
-      
-      // Compute live SNR
-      const liveSNR = signalStrength - noiseFloorEMA;
+      // Loudness veto: DISABLED (was blocking too many valid frames)
+      const loudnessVeto = false; // (broadbandPower - spectralBroadbandEMA > 18);
       
       // Update display
-      document.getElementById('liveSNR').textContent = liveSNR.toFixed(1) + ' dB';
-      document.getElementById('noiseFloor').textContent = noiseFloorEMA.toFixed(1) + ' dB';
-      
-      // Decision logic with hysteresis
-      const now = audioContext.currentTime;
-      const nowMs = now * 1000;
-      
-      if (liveSNR >= floorClampDb) {
-        // Signal above threshold
-        if (signalAboveThresholdStartTime === 0) {
-          signalAboveThresholdStartTime = nowMs;
-        }
-        signalBelowThresholdStartTime = 0; // Reset drop timer
-        
-        const aboveDuration = nowMs - signalAboveThresholdStartTime;
-        if (aboveDuration >= minHoldMs && !presenceState) {
-          presenceState = true;
-          console.log(`🟢 PRESENCE DETECTED: SNR=${liveSNR.toFixed(1)}dB held for ${aboveDuration.toFixed(0)}ms (threshold: ${minHoldMs}ms)`);
-        }
-        
-        document.getElementById('holdTimer').textContent = `↑${aboveDuration.toFixed(0)}ms`;
-        document.getElementById('decision').textContent = presenceState ? '🟢 PRESENT' : '⏳ RISING';
-      } else {
-        // Signal below threshold
-        if (signalBelowThresholdStartTime === 0) {
-          signalBelowThresholdStartTime = nowMs;
-        }
-        signalAboveThresholdStartTime = 0; // Reset rise timer
-        
-        const belowDuration = nowMs - signalBelowThresholdStartTime;
-        if (belowDuration >= minDropMs && presenceState) {
-          presenceState = false;
-          console.log(`🔴 PRESENCE LOST: SNR=${liveSNR.toFixed(1)}dB below for ${belowDuration.toFixed(0)}ms (hysteresis: ${minDropMs}ms)`);
-        }
-        
-        document.getElementById('holdTimer').textContent = `↓${belowDuration.toFixed(0)}ms`;
-        document.getElementById('decision').textContent = presenceState ? '⏳ FALLING' : '🔴 ABSENT';
-      }
-      
-      // Log SNR trace periodically
-      if (frameCount % 30 === 0 && frameCount > 0) {
-        console.log(`📊 SNR TRACE: signal=${signalStrength.toFixed(1)}dB, floor=${noiseFloorEMA.toFixed(1)}dB, SNR=${liveSNR.toFixed(1)}dB, state=${presenceState?'PRESENT':'ABSENT'}, decision=${liveSNR>=floorClampDb?'ABOVE':'BELOW'} threshold`);
-      }
+      document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
       
       // Detailed logging every 20 frames (~1.2s at 60ms symbols)
       const frameCount = spectralSymbolBuffer.length;
       if (frameCount % 20 === 0 && frameCount > 0) {
         console.log(`🎯 SPECTRAL RX @ frame ${frameCount}:`);
-        console.log(`  ├─ A/B energy: ${energyAB.toFixed(2)}dB, Guards: ${energyGuards.toFixed(2)}dB, Ratio: ${abToGuardRatio.toFixed(2)}dB`);
-        console.log(`  ├─ Last 4 deltas: [${spectralSymbolBuffer.slice(-4).map(d => d.toFixed(2)).join(', ')}]`);
+        console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz`);
+        console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB, Δ: ${delta.toFixed(2)}dB`);
+        console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, EMA: ${spectralBroadbandEMA.toFixed(2)}dB, Veto: ${loudnessVeto}`);
         console.log(`  └─ Buffer size: ${spectralSymbolBuffer.length}/${PN31_CODE.length}`);
       }
       
-      // Add delta to buffer (no loudness veto)
-      spectralSymbolBuffer.push(delta);
-      
-      // Keep buffer at code length
-      const codeLen = PN31_CODE.length;
-      if (spectralSymbolBuffer.length > codeLen * 2) {
-        spectralSymbolBuffer.shift();
-      }
+      if (!loudnessVeto) {
+        // Add delta to buffer
+        spectralSymbolBuffer.push(delta);
         
-      // Try correlation when we have enough symbols
-      if (spectralSymbolBuffer.length >= codeLen) {
-        // Phase scan and polarity check
-        const phaseMax = 7; // Check 8 phase offsets (better tolerance to jitter)
-        let best = { corr: -1, phase: 0, sign: 1, segment: [] };
-        let allCorrelations = []; // For PSR calculation
-          
-        for (let p = 0; p <= phaseMax; p++) {
-          const start = spectralSymbolBuffer.length - codeLen - p;
-          if (start >= 0) {
-            const seg = spectralSymbolBuffer.slice(start, start + codeLen);
-            const corrPos = computeCorrelation(seg, PN31_CODE);
-            const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
-            const corr = Math.max(corrPos, corrNeg);
-            const sign = corrNeg > corrPos ? -1 : 1;
-            allCorrelations.push(corr);
-            if (corr > best.corr) best = { corr, phase: p, sign, segment: seg };
-          }
+        // Keep buffer at code length
+        const codeLen = PN31_CODE.length;
+        if (spectralSymbolBuffer.length > codeLen * 2) {
+          spectralSymbolBuffer.shift();
         }
-        const correlation = best.corr;
-        const bestSegment = best.segment; // Phase-aligned segment that produced peak correlation
         
-        // Compute Peak-to-Sidelobe Ratio (PSR)
-        // Sidelobe = mean of all non-peak correlations
-        const sidelobes = allCorrelations.filter((c, i) => i !== best.phase);
-        const sidelobeMean = sidelobes.length > 0 ? sidelobes.reduce((a,b) => a+b, 0) / sidelobes.length : 0;
-        const peakToSidelobeRatio = correlation > 0 && sidelobeMean > 0 ? 
-          20 * Math.log10(correlation / Math.max(sidelobeMean, 0.001)) : 0;
-        
-        // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
-        if (!baselineCalibrated) {
-          baselineCalibrationSamples.push(correlation);
-          baselineBroadbandSamples.push(broadbandPower);
+        // Try correlation when we have enough symbols
+        if (spectralSymbolBuffer.length >= codeLen) {
+          // Phase scan and polarity check
+          const phaseMax = 7; // Check 8 phase offsets (better tolerance to jitter)
+          let best = { corr: -1, phase: 0, sign: 1 };
+          let allCorrelations = []; // For PSR calculation
           
-          // Also collect energy and guard baseline samples
-          if (!window.baselineEnergySamples) window.baselineEnergySamples = [];
-          if (!window.baselineGuardLoSamples) window.baselineGuardLoSamples = [];
-          if (!window.baselineGuardHiSamples) window.baselineGuardHiSamples = [];
+          for (let p = 0; p <= phaseMax; p++) {
+            const start = spectralSymbolBuffer.length - codeLen - p;
+            if (start >= 0) {
+              const seg = spectralSymbolBuffer.slice(start, start + codeLen);
+              const corrPos = computeCorrelation(seg, PN31_CODE);
+              const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
+              const corr = Math.max(corrPos, corrNeg);
+              const sign = corrNeg > corrPos ? -1 : 1;
+              allCorrelations.push(corr);
+              if (corr > best.corr) best = { corr, phase: p, sign };
+            }
+          }
+          const correlation = best.corr;
           
-          const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
-          window.baselineEnergySamples.push(currentEnergySum);
-          window.baselineGuardLoSamples.push(powerGuardLoRaw);
-          window.baselineGuardHiSamples.push(powerGuardHiRaw);
+          // Compute Peak-to-Sidelobe Ratio (PSR)
+          // Sidelobe = mean of all non-peak correlations
+          const sidelobes = allCorrelations.filter((c, i) => i !== best.phase);
+          const sidelobeMean = sidelobes.length > 0 ? sidelobes.reduce((a,b) => a+b, 0) / sidelobes.length : 0;
+          const peakToSidelobeRatio = correlation > 0 && sidelobeMean > 0 ? 
+            20 * Math.log10(correlation / Math.max(sidelobeMean, 0.001)) : 0;
+          
+      // BASELINE CALIBRATION PHASE (first 5 seconds / ~70 samples)
+          if (!baselineCalibrated) {
+            baselineCalibrationSamples.push(correlation);
+            baselineBroadbandSamples.push(broadbandPower);
+            
+            // Also collect energy and guard baseline samples
+            if (!window.baselineEnergySamples) window.baselineEnergySamples = [];
+            if (!window.baselineGuardLoSamples) window.baselineGuardLoSamples = [];
+            if (!window.baselineGuardHiSamples) window.baselineGuardHiSamples = [];
+            
+            const currentEnergySum = linearToDb(powerA + powerB);
+            window.baselineEnergySamples.push(currentEnergySum);
+            window.baselineGuardLoSamples.push(powerGuardLo);
+            window.baselineGuardHiSamples.push(powerGuardHi);
             
             if (baselineCalibrationSamples.length >= 70) {
               // Compute baseline statistics
@@ -1947,8 +1783,7 @@
             console.log(`  ├─ Peak: ${correlation.toFixed(3)} (phase=${best.phase}, sign=${best.sign > 0 ? '+' : '-'})`);
             console.log(`  ├─ Z-score: ${zScore.toFixed(2)} (baseline: μ=${baselineCorrelationMean.toFixed(3)}, σ=${baselineCorrelationStdDev.toFixed(3)})`);
             console.log(`  ├─ PSR: ${peakToSidelobeRatio.toFixed(1)} dB`);
-            console.log(`  ├─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
-            console.log(`  └─ Delta stats: min=${Math.min(...spectralSymbolBuffer.slice(-31)).toFixed(2)}, max=${Math.max(...spectralSymbolBuffer.slice(-31)).toFixed(2)}, range=${(Math.max(...spectralSymbolBuffer.slice(-31)) - Math.min(...spectralSymbolBuffer.slice(-31))).toFixed(2)}dB`);
+            console.log(`  └─ Delta (last 8): [${spectralSymbolBuffer.slice(-8).map(d => d.toFixed(1)).join(', ')}]`);
           }
           
           // ========== FSM STATE MACHINE ==========
@@ -1964,16 +1799,12 @@
           }
           
           // FSM thresholds (calibrated for real-world conditions)
-          // ✅ CHECKPOINT: Working configuration (encoded unlocks, unencoded fails)
-          // Encoded: corr=0.410, psr=9.7dB, z=4.61 → UNLOCK
-          // Unencoded: corr=0.28-0.31, psr=7-8dB, z=0.81-1.10 → REJECT (z-score blocks)
-          // Loudness veto is primary defense against clapping
           const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
-          const PSR_THRESHOLD = 7.5; // relaxed to allow encoded audio (loudness veto handles clapping)
-          const Z_THRESHOLD = 2.0; // lowered to handle contaminated baseline (TX running during calibration)
-          const MEDIAN_DELTA_THRESHOLD = 0.05; // dB - robust median |Δ| of phase-aligned segment (very small on-phone)
-          const ENERGY_BALANCE_THRESHOLD = 4.5; // dB - allow A/B differential (±6.5 dB => ~3.7 dB sum)
-          const GUARD_THRESHOLD = 4.0; // dB - relaxed to allow encoded audio
+          const PSR_THRESHOLD = 7.5;
+          const Z_THRESHOLD = 2.5;
+          const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
+          const ENERGY_BALANCE_THRESHOLD = 1.0; // dB
+          const GUARD_THRESHOLD = 10.0; // dB (guards pick up TX leakage at close range)
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 2.0; // seconds
           const VOTE_WINDOW = 5.0; // seconds (allow 2 repeats of PN31 @ 60ms symbols)
@@ -1981,7 +1812,7 @@
           
           // ===== STATE: IDLE =====
           if (fsmState === 'IDLE') {
-            // Look for preamble: rapid alternating Δ pattern with controlled amplitude
+            // Look for preamble: rapid alternating Δ pattern
             const recentDeltas = spectralSymbolBuffer.slice(-10);
             if (recentDeltas.length >= 6) {
               // Check for rapid sign changes (preamble signature)
@@ -1993,162 +1824,150 @@
               }
               const signChangeRate = signChanges / recentDeltas.length;
               
-              // Also check delta magnitude vs expected from symbol gain (≈2×gain)
-              const symbolGainParam = parseFloat(document.getElementById('spectralGain').value) || 6.5;
-              const expectedDelta = 2 * symbolGainParam; // e.g., ±6.5dB => ~13dB Δ
-              const avgAbsDelta = recentDeltas.reduce((sum, d) => sum + Math.abs(d), 0) / recentDeltas.length;
-              const deltaInRange = avgAbsDelta >= Math.max(0.4, expectedDelta * 0.4) && avgAbsDelta <= Math.min(20, expectedDelta * 1.6);
-              
-              // Require both high sign change rate AND reasonable delta amplitude
-              if (signChangeRate >= 0.5 && deltaInRange) { // ≥50% sign changes = preamble
+              if (signChangeRate > 0.6) { // >60% sign changes = preamble
                 fsmState = 'PREAMBLE_LOCK';
                 fsmStateStartTime = now;
                 preambleFlipHistory = recentDeltas.slice();
-                console.log(`🎵 FSM: IDLE → PREAMBLE_LOCK (sign changes: ${signChanges}/${recentDeltas.length}, rate=${(signChangeRate*100).toFixed(0)}%, avgΔ=${avgAbsDelta.toFixed(2)}dB, expected≈${expectedDelta.toFixed(1)}dB)`);
+                console.log(`🎵 FSM: IDLE → PREAMBLE_LOCK (sign changes: ${signChanges}/${recentDeltas.length}, rate=${(signChangeRate*100).toFixed(0)}%)`);
                 updateFSMStateDisplay();
               }
             }
           }
           
           // ===== STATE: PREAMBLE_LOCK =====
-        else if (fsmState === 'PREAMBLE_LOCK') {
-          const elapsed = now - fsmStateStartTime;
-          
-          if (elapsed > PREAMBLE_TIMEOUT) {
-            // Timeout - back to IDLE
-            console.log(`⏱️ FSM: PREAMBLE_LOCK → IDLE (timeout after ${elapsed.toFixed(1)}s)`);
-            fsmState = 'IDLE';
-            fsmStateStartTime = now;
-            updateFSMStateDisplay();
-            return;
-          }
-          
-          // Estimate drift from preamble (simplified: assume ±0.3% max)
-          preambleDriftEstimate = 0; // Real implementation would compute from flip timing
-          
-          // Check if drift acceptable
-          if (Math.abs(preambleDriftEstimate) <= 0.003) { // ±0.3%
-            console.log(`✅ FSM: PREAMBLE_LOCK → CODE_LOCK (drift=${(preambleDriftEstimate*100).toFixed(2)}%)`);
-            fsmState = 'CODE_LOCK';
-            fsmStateStartTime = now;
-            codeDetectionAttempts = [];
-            codeRepeatTimestamps = [];
-            updateFSMStateDisplay();
-            console.log(`[config] thresholds: corr>=${CORR_THRESHOLD}, psr>=${PSR_THRESHOLD}dB, z>=${Z_THRESHOLD}, median|Δ|>=${MEDIAN_DELTA_THRESHOLD}dB, energy<=${ENERGY_BALANCE_THRESHOLD}dB, guards<=${GUARD_THRESHOLD}dB, vote=${VOTE_WINDOW}s, abGuardRatio>=6dB`);
-          }
-        }
-        
-        // ===== STATE: CODE_LOCK =====
-        else if (fsmState === 'CODE_LOCK') {
-          const elapsed = now - fsmStateStartTime;
-          
-          if (elapsed > VOTE_WINDOW) {
-            // Timeout - back to IDLE
-            console.log(`⏱️ FSM: CODE_LOCK → IDLE (timeout after ${elapsed.toFixed(1)}s, no valid code detected)`);
-            fsmState = 'IDLE';
-            fsmStateStartTime = now;
-            updateFSMStateDisplay();
-            return;
-          }
-          
-          // Compute all detection metrics
-          // CRITICAL: Use the phase-aligned segment that produced the peak correlation
-          const alignedDeltas = bestSegment.length === codeLen ? bestSegment : spectralSymbolBuffer.slice(-codeLen);
-          
-          // 1. Correlation check
-          const corrPass = correlation >= CORR_THRESHOLD;
-          
-          // 2. PSR check
-          const psrPass = peakToSidelobeRatio >= PSR_THRESHOLD;
-          
-          // 3. Z-score check
-          const zPass = zScore >= Z_THRESHOLD;
-          
-          // 4. Median |Δ| check (using phase-aligned, median-centered segment)
-          const sortedSeg = [...alignedDeltas].sort((a,b) => a-b);
-          const segMedian = sortedSeg[Math.floor(sortedSeg.length/2)] ?? 0;
-          const absCentered = alignedDeltas.map(d => Math.abs(d - segMedian)).sort((a,b) => a-b);
-          const medianDelta = absCentered.length > 0 
-            ? absCentered[Math.floor(absCentered.length/2)]
-            : 0;
-          const medianDeltaPass = medianDelta >= MEDIAN_DELTA_THRESHOLD;
-          
-          // 5. Energy balance check: |(E(A)+E(B)) - baseline| ≤ 1.0 dB
-          const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
-          const energyDeviation = Math.abs(currentEnergySum - baselineEnergySum);
-          const energyBalancePass = energyDeviation <= ENERGY_BALANCE_THRESHOLD;
-          
-          // 6. Guard stability check
-          const guardLoDeviation = Math.abs(powerGuardLoRaw - baselineGuardLo);
-          const guardHiDeviation = Math.abs(powerGuardHiRaw - baselineGuardHi);
-          const guardsPass = guardLoDeviation <= GUARD_THRESHOLD && guardHiDeviation <= GUARD_THRESHOLD;
-          
-          // 7. A/B to Guard energy ratio check (NEW: replaces loudness veto)
-          // Encoded signal: high A+B relative to guards. Claps/noise: all bands spike together.
-          const AB_GUARD_RATIO_THRESHOLD = 6.0; // dB - A+B must be at least 6dB louder than guards
-          const abGuardRatioPass = abToGuardRatio >= AB_GUARD_RATIO_THRESHOLD;
-          
-          // Log candidate if any metric is strong
-          if (correlation > 0.30 || zScore > 2.0 || peakToSidelobeRatio > 7.0) {
-            console.log(`🔍 CODE_LOCK CANDIDATE:`);
-            console.log(`  ├─ [preamble] drift=${(preambleDriftEstimate*100).toFixed(2)}%`);
-            console.log(`  ├─ [match] t=${elapsed.toFixed(2)}s corr=${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'} psr=${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'} z=${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
-            console.log(`  ├─ [per-symbol] median|Δ|=${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'} energyDev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
-            console.log(`  ├─ [aligned Δ stats] min=${Math.min(...alignedDeltas).toFixed(2)}dB, max=${Math.max(...alignedDeltas).toFixed(2)}dB, range=${(Math.max(...alignedDeltas) - Math.min(...alignedDeltas)).toFixed(2)}dB, median=${segMedian.toFixed(2)}dB`);
-            console.log(`  ├─ [guards] Lo: ${guardLoDeviation.toFixed(1)}dB ${guardLoDeviation<=GUARD_THRESHOLD?'✅':'❌'}, Hi: ${guardHiDeviation.toFixed(1)}dB ${guardHiDeviation<=GUARD_THRESHOLD?'✅':'❌'} → ${guardsPass?'✅':'❌'}`);
-            console.log(`  ├─ [A/B vs guards] ratio=${abToGuardRatio.toFixed(1)}dB (≥${AB_GUARD_RATIO_THRESHOLD}) ${abGuardRatioPass?'✅':'❌'}`);
-          }
-          
-          // ALL criteria must pass (including new A/B-to-guard ratio)
-          const allPass = corrPass && psrPass && zPass && medianDeltaPass && energyBalancePass && guardsPass && abGuardRatioPass;
-          
-          if (allPass) {
-            codeRepeatTimestamps.push(now);
-            console.log(`  ├─ [vote] ${codeRepeatTimestamps.length}/2 within ${elapsed.toFixed(1)}s`);
+          else if (fsmState === 'PREAMBLE_LOCK') {
+            const elapsed = now - fsmStateStartTime;
             
-            // Check for cadence: accept either per-frame (~symbol) or per-repeat (~codeLen*symbol)
-            if (codeRepeatTimestamps.length >= 2) {
-              const lastTwo = codeRepeatTimestamps.slice(-2);
-              const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
-              const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
-              const expectedRepeatMs = PN31_CODE.length * symbolMs;
-              const nearRepeat = Math.abs(deltaT - expectedRepeatMs) <= Math.max(expectedRepeatMs * 0.15, 120);
-              const cadenceOk = nearRepeat;
+            if (elapsed > PREAMBLE_TIMEOUT) {
+              // Timeout - back to IDLE
+              console.log(`⏱️ FSM: PREAMBLE_LOCK → IDLE (timeout after ${elapsed.toFixed(1)}s)`);
+              fsmState = 'IDLE';
+              fsmStateStartTime = now;
+              updateFSMStateDisplay();
+              return;
+            }
+            
+            // Estimate drift from preamble (simplified: assume ±0.3% max)
+            preambleDriftEstimate = 0; // Real implementation would compute from flip timing
+            
+            // Check if drift acceptable
+            if (Math.abs(preambleDriftEstimate) <= 0.003) { // ±0.3%
+              console.log(`✅ FSM: PREAMBLE_LOCK → CODE_LOCK (drift=${(preambleDriftEstimate*100).toFixed(2)}%)`);
+              fsmState = 'CODE_LOCK';
+              fsmStateStartTime = now;
+              codeDetectionAttempts = [];
+              codeRepeatTimestamps = [];
+              updateFSMStateDisplay();
+              console.log(`[config] thresholds: corr>=${CORR_THRESHOLD}, psr>=${PSR_THRESHOLD}dB, z>=${Z_THRESHOLD}, median|Δ|>=${MEDIAN_DELTA_THRESHOLD}dB, energy<=${ENERGY_BALANCE_THRESHOLD}dB, guards<=${GUARD_THRESHOLD}dB, vote=${VOTE_WINDOW}s`);
+            }
+          }
+          
+          // ===== STATE: CODE_LOCK =====
+          else if (fsmState === 'CODE_LOCK') {
+            const elapsed = now - fsmStateStartTime;
+            
+            if (elapsed > VOTE_WINDOW) {
+              // Timeout - back to IDLE
+              console.log(`⏱️ FSM: CODE_LOCK → IDLE (timeout after ${elapsed.toFixed(1)}s, no valid code detected)`);
+              fsmState = 'IDLE';
+              fsmStateStartTime = now;
+              updateFSMStateDisplay();
+              return;
+            }
+            
+            // Compute all detection metrics
+            const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
+            
+            // 1. Correlation check
+            const corrPass = correlation >= CORR_THRESHOLD;
+            
+            // 2. PSR check
+            const psrPass = peakToSidelobeRatio >= PSR_THRESHOLD;
+            
+            // 3. Z-score check
+            const zPass = zScore >= Z_THRESHOLD;
+            
+            // 4. Median |Δ| check
+            const deltaAbs = recentDeltas.map(d => Math.abs(d));
+            const medianDelta = deltaAbs.length > 0 
+              ? deltaAbs.sort((a,b) => a-b)[Math.floor(deltaAbs.length/2)]
+              : 0;
+            const medianDeltaPass = medianDelta >= MEDIAN_DELTA_THRESHOLD;
+            
+            // 5. Energy balance check: |(E(A)+E(B)) - baseline| ≤ 1.0 dB
+            const currentEnergySum = linearToDb(powerA + powerB);
+            const energyDeviation = Math.abs(currentEnergySum - baselineEnergySum);
+            const energyBalancePass = energyDeviation <= ENERGY_BALANCE_THRESHOLD;
+            
+            // 6. Guard stability check
+            const guardLoDeviation = Math.abs(powerGuardLo - baselineGuardLo);
+            const guardHiDeviation = Math.abs(powerGuardHi - baselineGuardHi);
+            const guardsPass = guardLoDeviation <= GUARD_THRESHOLD && guardHiDeviation <= GUARD_THRESHOLD;
+            
+            // Log candidate if any metric is strong
+            if (correlation > 0.30 || zScore > 2.0 || peakToSidelobeRatio > 7.0) {
+              console.log(`🔍 CODE_LOCK CANDIDATE:`);
+              console.log(`  ├─ [preamble] drift=${(preambleDriftEstimate*100).toFixed(2)}%`);
+              console.log(`  ├─ [match] t=${elapsed.toFixed(2)}s corr=${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'} psr=${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'} z=${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
+              console.log(`  ├─ [per-symbol] median|Δ|=${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'} energyDev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
+              console.log(`  ├─ [guards] Lo: ${guardLoDeviation.toFixed(1)}dB ${guardLoDeviation<=GUARD_THRESHOLD?'✅':'❌'}, Hi: ${guardHiDeviation.toFixed(1)}dB ${guardHiDeviation<=GUARD_THRESHOLD?'✅':'❌'} → ${guardsPass?'✅':'❌'}`);
+            }
+            
+            // ALL criteria must pass
+            const allPass = corrPass && psrPass && zPass && medianDeltaPass && energyBalancePass && guardsPass;
+            
+            if (allPass) {
+              codeRepeatTimestamps.push(now);
+              console.log(`  ├─ [vote] ${codeRepeatTimestamps.length}/2 within ${elapsed.toFixed(1)}s`);
               
-              console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (require repeat≈${Math.round(expectedRepeatMs)}ms only) ${cadenceOk?'✅':'❌'}`);
-              
-              if (cadenceOk) {
-                // UNLOCK!
-                fsmState = 'UNLOCKED';
-                fsmLockoutUntil = now + COOLDOWN_DURATION;
-                presenceVerified = true;
-                
-                const badge = document.getElementById('presenceBadge');
-                badge.textContent = '🔓 UNLOCKED';
-                badge.classList.add('verified');
-                
-                console.log(`🎉 FSM: CODE_LOCK → UNLOCKED (latched ${COOLDOWN_DURATION}s)`);
-                console.log(`  └─ All criteria passed with proper cadence!`);
-                updateFSMStateDisplay();
-                
-                // Reset to IDLE after cooldown
-                setTimeout(() => {
-                  fsmState = 'IDLE';
-                  fsmStateStartTime = audioContext.currentTime;
-                  presenceVerified = false;
+                // Check for cadence: accept either per-frame (~symbol) or per-repeat (~codeLen*symbol)
+                if (codeRepeatTimestamps.length >= 2) {
+                  const lastTwo = codeRepeatTimestamps.slice(-2);
+                  const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
+                  const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
+                  const expectedRepeatMs = PN31_CODE.length * symbolMs;
+                  const nearFrame = Math.abs(deltaT - symbolMs) <= Math.max(symbolMs * 0.5, 40);
+                  const nearRepeat = Math.abs(deltaT - expectedRepeatMs) <= Math.max(expectedRepeatMs * 0.25, 150);
+                  const cadenceOk = nearFrame || nearRepeat;
+                  
+                  console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (symbol≈${symbolMs}ms, repeat≈${Math.round(expectedRepeatMs)}ms) ${cadenceOk?'✅':'❌'}`);
+                  
+                  if (cadenceOk) {
+                  // UNLOCK!
+                  fsmState = 'UNLOCKED';
+                  fsmLockoutUntil = now + COOLDOWN_DURATION;
+                  presenceVerified = true;
+                  
                   const badge = document.getElementById('presenceBadge');
-                  badge.textContent = '⏳ Listening...';
-                  badge.classList.remove('verified');
-                  console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                  badge.textContent = '🔓 UNLOCKED';
+                  badge.classList.add('verified');
+                  
+                  console.log(`🎉 FSM: CODE_LOCK → UNLOCKED (latched ${COOLDOWN_DURATION}s)`);
+                  console.log(`  └─ All criteria passed with proper cadence!`);
                   updateFSMStateDisplay();
-                }, COOLDOWN_DURATION * 1000);
+                  
+                  // Reset to IDLE after cooldown
+                  setTimeout(() => {
+                    fsmState = 'IDLE';
+                    fsmStateStartTime = audioContext.currentTime;
+                    presenceVerified = false;
+                    const badge = document.getElementById('presenceBadge');
+                    badge.textContent = '⏳ Listening...';
+                    badge.classList.remove('verified');
+                    console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                    updateFSMStateDisplay();
+                  }, COOLDOWN_DURATION * 1000);
+                }
               }
             }
           }
+          
+          // ===== STATE: UNLOCKED =====
+          // (Nothing to do here - just wait for cooldown to expire)
         }
-        
-        // ===== STATE: UNLOCKED =====
-        // (Nothing to do here - just wait for cooldown to expire)
+      } else {
+        const vetoJump = broadbandPower - spectralBroadbandEMA;
+        console.log(`⚠️ Loudness veto active: broadband=${broadbandPower.toFixed(2)}dB, EMA=${spectralBroadbandEMA.toFixed(2)}dB, jump=${vetoJump.toFixed(2)}dB (>12dB threshold)`);
       }
     }
     
