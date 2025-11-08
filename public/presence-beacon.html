@@ -1516,7 +1516,7 @@
       
       analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048; // 2048 @ 48kHz = ~43Hz bins, ~21ms hop
-      analyser.smoothingTimeConstant = 0.3; // Moderate smoothing
+      analyser.smoothingTimeConstant = 0; // No smoothing - capture rapid A/B flips fully
       
       micSource.connect(hpf);
       hpf.connect(analyser);
@@ -1813,7 +1813,7 @@
           // Loudness veto is primary defense against clapping
           const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
           const PSR_THRESHOLD = 7.5; // relaxed to allow encoded audio (loudness veto handles clapping)
-          const Z_THRESHOLD = 3.0; // relaxed to allow encoded audio
+          const Z_THRESHOLD = 2.0; // lowered to handle contaminated baseline (TX running during calibration)
           const MEDIAN_DELTA_THRESHOLD = 0.05; // dB - robust median |Δ| of phase-aligned segment (very small on-phone)
           const ENERGY_BALANCE_THRESHOLD = 4.5; // dB - allow A/B differential (±6.5 dB => ~3.7 dB sum)
           const GUARD_THRESHOLD = 4.0; // dB - relaxed to allow encoded audio
