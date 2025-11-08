@@ -1808,7 +1808,7 @@
           const CORR_THRESHOLD = 0.30; // lowered to tolerate jittered alignment
           const PSR_THRESHOLD = 7.5; // relaxed to allow encoded audio (loudness veto handles clapping)
           const Z_THRESHOLD = 3.0; // relaxed to allow encoded audio
-          const MEDIAN_DELTA_THRESHOLD = 0.8; // dB - raised to ensure real modulation
+          const MEDIAN_DELTA_THRESHOLD = 0.05; // dB - robust median |Δ| of phase-aligned segment (very small on-phone)
           const ENERGY_BALANCE_THRESHOLD = 4.5; // dB - allow A/B differential (±6.5 dB => ~3.7 dB sum)
           const GUARD_THRESHOLD = 4.0; // dB - relaxed to allow encoded audio
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
@@ -1912,10 +1912,12 @@
             // 3. Z-score check
             const zPass = zScore >= Z_THRESHOLD;
             
-            // 4. Median |Δ| check (using phase-aligned segment)
-            const deltaAbs = alignedDeltas.map(d => Math.abs(d));
-            const medianDelta = deltaAbs.length > 0 
-              ? deltaAbs.sort((a,b) => a-b)[Math.floor(deltaAbs.length/2)]
+            // 4. Median |Δ| check (using phase-aligned, median-centered segment)
+            const sortedSeg = [...alignedDeltas].sort((a,b) => a-b);
+            const segMedian = sortedSeg[Math.floor(sortedSeg.length/2)] ?? 0;
+            const absCentered = alignedDeltas.map(d => Math.abs(d - segMedian)).sort((a,b) => a-b);
+            const medianDelta = absCentered.length > 0 
+              ? absCentered[Math.floor(absCentered.length/2)]
               : 0;
             const medianDeltaPass = medianDelta >= MEDIAN_DELTA_THRESHOLD;
             
