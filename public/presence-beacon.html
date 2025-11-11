@@ -2114,10 +2114,14 @@
             const corePass = corrPass && psrPass && zPass;
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
-            if (!txRunning && frameCount % 60 === 0) {
+            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+            if (!txRunning && !isOverAirMode && frameCount % 60 === 0) {
               console.log(`  └─ ⚠️ WARNING: TX not running - unlock may be from noise!`);
             }
-            
+            if (isOverAirMode && frameCount % 120 === 0) {
+              console.log(`  └─ ℹ️ Over-Air Mode enabled - bypassing local TX validation`);
+            }
+
             // Layer 3: POLARITY TRACKING (for diagnostics, not blocking)
             if (!window.detectionPolarities) window.detectionPolarities = [];
             const detectionPolarity = best.sign; // +1 or -1 from correlation
@@ -2170,56 +2174,58 @@
                 const polarityConsistent = polarities[0] === polarities[1];
                 console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
                 
-                // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
-                const detections = window.detectionHistory.slice(-2);
-                const allTxOn = detections.every(d => d.txWasRunning);
-                console.log(`  ├─ [TX validation] ${allTxOn ? '✅ TX was ON' : '❌ TX was OFF - BLOCKING UNLOCK'}`);
-                
-                if (cadenceOk && allTxOn) {
-                  // 🎉 UNLOCK!
-                  fsmState = 'UNLOCKED';
-                  fsmLockoutUntil = now + COOLDOWN_DURATION;
-                  presenceVerified = true;
-                  
-                  const badge = document.getElementById('presenceBadge');
-                  badge.textContent = '🔓 UNLOCKED';
-                  badge.classList.add('verified');
-                  
-                  // Log detection quality for analysis
-                  console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-                  console.log(`  ├─ Detections: 2/2 (interval: ${deltaT.toFixed(0)}ms)`);
-                  console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
-                  console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
-                  console.log(`  ├─ TX validation: ✅ TX was ON for all detections`);
-                  console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
-                  
-                  // Warning if mixed polarity (diagnostic only)
-                  if (!polarityConsistent) {
-                    console.warn(`⚠️ Mixed polarity detected - signal may have interference`);
-                  }
-                  
-                  updateFSMStateDisplay();
-                  
-                  // Reset to IDLE after cooldown
-                  setTimeout(() => {
-                    fsmState = 'IDLE';
-                    fsmStateStartTime = audioContext.currentTime;
-                    presenceVerified = false;
-                    window.detectionHistory = [];
-                    window.detectionPolarities = [];
-                    const badge = document.getElementById('presenceBadge');
-                    badge.textContent = '⏳ Listening...';
-                    badge.classList.remove('verified');
-                    console.log('🔄 Cooldown complete - FSM reset to IDLE');
-                    updateFSMStateDisplay();
-                  }, COOLDOWN_DURATION * 1000);
-                } else if (!allTxOn) {
-                  // TX was off - reject as false positive
-                  console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
-                  // Clear oldest detection to allow new pattern
-                  codeRepeatTimestamps.shift();
-                  window.detectionPolarities.shift();
-                } else {
+            // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
+            const detections = window.detectionHistory.slice(-2);
+            const allTxOn = detections.every(d => d.txWasRunning);
+            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+            const txValidationPass = isOverAirMode ? true : allTxOn;
+            console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
+            
+            if (cadenceOk && txValidationPass) {
+              // 🎉 UNLOCK!
+              fsmState = 'UNLOCKED';
+              fsmLockoutUntil = now + COOLDOWN_DURATION;
+              presenceVerified = true;
+              
+              const badge = document.getElementById('presenceBadge');
+              badge.textContent = '🔓 UNLOCKED';
+              badge.classList.add('verified');
+              
+              // Log detection quality for analysis
+              console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
+              console.log(`  ├─ Detections: 2/2 (interval: ${deltaT.toFixed(0)}ms)`);
+              console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
+              console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
+              console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
+              console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
+              
+              // Warning if mixed polarity (diagnostic only)
+              if (!polarityConsistent) {
+                console.warn(`⚠️ Mixed polarity detected - signal may have interference`);
+              }
+              
+              updateFSMStateDisplay();
+              
+              // Reset to IDLE after cooldown
+              setTimeout(() => {
+                fsmState = 'IDLE';
+                fsmStateStartTime = audioContext.currentTime;
+                presenceVerified = false;
+                window.detectionHistory = [];
+                window.detectionPolarities = [];
+                const badge = document.getElementById('presenceBadge');
+                badge.textContent = '⏳ Listening...';
+                badge.classList.remove('verified');
+                console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                updateFSMStateDisplay();
+              }, COOLDOWN_DURATION * 1000);
+            } else if (!txValidationPass) {
+              // TX was off - reject as false positive (unless Over-Air Mode)
+              console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
+              // Clear oldest detection to allow new pattern
+              codeRepeatTimestamps.shift();
+              window.detectionPolarities.shift();
+            } else {
                   console.log(`  └─ ❌ Cadence check failed - waiting for next detection`);
                   // Clear oldest detection to allow new pattern
                   codeRepeatTimestamps.shift();
