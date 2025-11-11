@@ -756,6 +756,14 @@
           </div>
         </div>
 
+        <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="iphoneMode" style="width: 18px; height: 18px; cursor: pointer;">
+            <span style="font-weight: 600;">📱 iPhone Mode</span>
+            <span style="opacity: 0.7; font-size: 0.9em;">(Relaxed thresholds: correlation ≥0.20 for over-air detection)</span>
+          </label>
+        </div>
+
         <div class="button-row">
           <button id="startRxBtn" class="btn">Start RX</button>
           <button id="stopRxBtn" class="btn btn-stop" disabled>Stop RX</button>
@@ -1997,10 +2005,11 @@
             return;
           }
           
-          // FSM thresholds - TIGHTENED to reduce false positives
-          const CORR_THRESHOLD = 0.30; // Raised from 0.25 to reject ambient noise
-          const PSR_THRESHOLD = 6.0; // Raised from 5.0 for better signal quality
-          const Z_THRESHOLD = 3.0; // Raised from 2.5 (false positive had 2.53)
+          // FSM thresholds - adjust for iPhone Mode (over-air detection)
+          const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
+          const CORR_THRESHOLD = isIphoneMode ? 0.20 : 0.30; // Lower for iPhone over-air
+          const PSR_THRESHOLD = isIphoneMode ? 4.0 : 6.0; // Lower for iPhone over-air
+          const Z_THRESHOLD = isIphoneMode ? 2.5 : 3.0; // Lower for iPhone over-air
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
