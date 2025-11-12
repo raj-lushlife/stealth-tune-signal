@@ -1764,9 +1764,40 @@
       const binIndexA = Math.round(freqA / binHz);
       const binIndexB = Math.round(freqB / binHz);
       
-      // Extract power at bins A and B - measure ±1 bin around each center
-      const powerA = computeBandPower(dataArray, binHz, freqA - binHz, freqA + binHz);
-      const powerB = computeBandPower(dataArray, binHz, freqB - binHz, freqB + binHz);
+      // Compute band-integrated linear power with Hann weighting (±3 bins)
+      const dbToLinAmp = (db) => Math.pow(10, db / 20);
+      const linPowerAt = (idx) => {
+        const db = dataArray[idx];
+        return isFinite(db) ? Math.pow(dbToLinAmp(db), 2) : 0; // amplitude^2 = power
+      };
+      const bandLinearPower = (centerHz, halfBins = 3) => {
+        const centerIdx = Math.round(centerHz / binHz);
+        let num = 0, wsum = 0;
+        for (let k = -halfBins; k <= halfBins; k++) {
+          const i = centerIdx + k;
+          if (i >= 0 && i < dataArray.length) {
+            const w = 0.5 * (1 + Math.cos(Math.PI * k / (halfBins + 0.0001))); // Hann-like
+            num += w * linPowerAt(i);
+            wsum += w;
+          }
+        }
+        return wsum > 0 ? num / wsum : 0;
+      };
+      const powerA = bandLinearPower(freqA);
+      const powerB = bandLinearPower(freqB);
+
+      // Normalized differential ratio in [-1, 1]
+      const eps = 1e-12;
+      const r = (powerB - powerA) / Math.max(powerA + powerB, eps);
+
+      // Whitening (EMA mean/std) over ~10 frames
+      if (window.rEmaMean == null) { window.rEmaMean = 0; window.rEmaSq = 0; }
+      const rAlpha = 0.1;
+      window.rEmaMean = (1 - rAlpha) * window.rEmaMean + rAlpha * r;
+      window.rEmaSq = (1 - rAlpha) * window.rEmaSq + rAlpha * (r * r);
+      const rVar = Math.max(window.rEmaSq - window.rEmaMean * window.rEmaMean, 1e-6);
+      const rStd = Math.sqrt(rVar);
+      const rPrime = (r - window.rEmaMean) / rStd;
       
       // DIAGNOSTIC: Show real-time FFT visualization for first 100 frames
       if (frameNum <= 100) {
@@ -1777,10 +1808,12 @@
           const after = [dataArray[idx+1], dataArray[idx+2]].map(safeVal);
           return `[${before.join(',')},(${center}),${after.join(',')}]`;
         };
+        const powerAdB = 10 * Math.log10(Math.max(powerA, eps));
+        const powerBdB = 10 * Math.log10(Math.max(powerB, eps));
         console.log(`  ├─ Bin A [${binIndexA}] @ ${freqA}Hz: ${getContext(binIndexA)} dB`);
         console.log(`  ├─ Bin B [${binIndexB}] @ ${freqB}Hz: ${getContext(binIndexB)} dB`);
-        console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB`);
-        console.log(`  └─ Δ (B-A): ${(powerB - powerA).toFixed(2)}dB`);
+        console.log(`  ├─ PowerA: ${powerAdB.toFixed(2)}dB, PowerB: ${powerBdB.toFixed(2)}dB`);
+        console.log(`  └─ r=(B−A)/(B+A): ${r.toFixed(3)}, r' (whitened): ${rPrime.toFixed(3)}`);
       }
       
       // Guards (for baseline stability check) - placed ±3× bin spacing for better isolation
@@ -1798,8 +1831,7 @@
       const powerGuardLo = window.guardLoEMA;
       const powerGuardHi = window.guardHiEMA;
       
-      // Compute differential (in dB)
-      const delta = powerB - powerA;
+      // r computed above; using rPrime for correlation and gating
       
       // Compute broadband RMS for loudness veto (1-15kHz)
       const broadbandPower = computeBandPower(dataArray, binHz, 1000, 15000);
@@ -1814,13 +1846,18 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
       
-      // Add delta to buffer (always, even during calibration)
-      spectralSymbolBuffer.push(delta);
-      
-      // Keep buffer at code length
+      // Add r' to oversample buffer; emit one symbol every OVERSAMPLE frames
+      if (!window.rOversampleBuf) window.rOversampleBuf = [];
+      window.rOversampleBuf.push(rPrime);
       const codeLen = PN31_CODE.length;
-      if (spectralSymbolBuffer.length > codeLen * 2) {
-        spectralSymbolBuffer.shift();
+      if (window.rOversampleBuf.length >= (window.SYMBOL_OVERSAMPLE || 1)) {
+        const symVal = window.rOversampleBuf.reduce((a,b)=>a+b,0) / window.rOversampleBuf.length;
+        window.rOversampleBuf = [];
+        spectralSymbolBuffer.push(symVal);
+        // Keep buffer at ~2× code length
+        if (spectralSymbolBuffer.length > codeLen * 2) {
+          spectralSymbolBuffer.shift();
+        }
       }
       
       // BASELINE CALIBRATION PHASE - Collect correlation samples to establish noise floor
@@ -1832,11 +1869,11 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
         if (!window.baselineDeltaSamples) window.baselineDeltaSamples = [];
         if (!window.baselineCorrelationSamples) window.baselineCorrelationSamples = [];
         
-        const currentEnergySum = linearToDb(powerA + powerB);
+        const currentEnergySum = 10 * Math.log10(Math.max(powerA + powerB, 1e-12));
         window.baselineEnergySamples.push(currentEnergySum);
         window.baselineGuardLoSamples.push(powerGuardLo);
         window.baselineGuardHiSamples.push(powerGuardHi);
-        window.baselineDeltaSamples.push(delta); // Keep signed deltas for proper correlation
+        window.baselineDeltaSamples.push(r); // Use raw normalized ratio for baseline
         baselineBroadbandSamples.push(broadbandPower);
         
         // Compute correlation on recent buffer for baseline (once we have enough samples)
@@ -1927,7 +1964,7 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
         }
         
         // Update UI during calibration
-        document.getElementById('corrPeak').textContent = `${Math.abs(delta).toFixed(2)}dB (cal)`;
+        document.getElementById('corrPeak').textContent = `${Math.abs(r).toFixed(2)} (cal)`;
         document.getElementById('corrZScore').textContent = `${calSampleCount}/70`;
         document.getElementById('corrPSR').textContent = '—';
         return; // Don't detect during calibration
@@ -1938,7 +1975,9 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
       if (frameCount % 20 === 0 && frameCount > 0) {
         console.log(`🎯 SPECTRAL RX @ frame ${frameCount}:`);
         console.log(`  ├─ BinHz: ${binHz.toFixed(2)}Hz, FreqA: ${freqA}Hz, FreqB: ${freqB}Hz`);
-        console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB, Δ: ${delta.toFixed(2)}dB`);
+        const powerAdB = 10 * Math.log10(Math.max(powerA, 1e-12));
+        const powerBdB = 10 * Math.log10(Math.max(powerB, 1e-12));
+        console.log(`  ├─ PowerA: ${powerAdB.toFixed(2)}dB, PowerB: ${powerBdB.toFixed(2)}dB, r: ${r.toFixed(3)}, r': ${rPrime.toFixed(3)}`);
         console.log(`  ├─ Broadband: ${broadbandPower.toFixed(2)}dB, EMA: ${spectralBroadbandEMA.toFixed(2)}dB, Veto: ${loudnessVeto}`);
         console.log(`  └─ Buffer size: ${spectralSymbolBuffer.length}/${PN31_CODE.length}`);
       }
