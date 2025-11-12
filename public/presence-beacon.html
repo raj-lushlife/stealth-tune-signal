@@ -1783,8 +1783,8 @@
       const alpha = 0.3; // ~200ms EMA
       spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
       
-      // Loudness veto: DISABLED (was blocking too many valid frames)
-      const loudnessVeto = false; // (broadbandPower - spectralBroadbandEMA > 18);
+// Loudness veto: enabled in Over-Air Mode to block sudden broadband bursts (shouts/claps)
+const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) && ((broadbandPower - spectralBroadbandEMA) > 12);
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
@@ -2005,18 +2005,19 @@
             return;
           }
           
-          // FSM thresholds - STRICTER for Over-Air Mode to prevent false positives
-          const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-          const CORR_THRESHOLD = isOverAirMode ? 0.45 : 0.30; // HIGHER for over-air (reject weak correlations)
-          const PSR_THRESHOLD = isOverAirMode ? 8.0 : 6.0; // HIGHER for over-air (require cleaner peaks)
-          const Z_THRESHOLD = isOverAirMode ? 4.0 : 3.0; // HIGHER for over-air (stronger statistical significance)
-          const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
-          const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
-          const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
-          const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
-          const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
-          const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
-          const COOLDOWN_DURATION = 45.0; // seconds
+// FSM thresholds - STRICTER for Over-Air Mode to prevent false positives
+const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+const CORR_THRESHOLD = isOverAirMode ? 0.45 : 0.30; // HIGHER for over-air (reject weak correlations)
+const PSR_THRESHOLD = isOverAirMode ? 8.0 : 6.0; // HIGHER for over-air (require cleaner peaks)
+const Z_THRESHOLD = isOverAirMode ? 4.0 : 3.0; // HIGHER for over-air (stronger statistical significance)
+const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
+const ENERGY_BALANCE_THRESHOLD = isOverAirMode ? 3.0 : 5.0; // Tighter over-air
+const GUARD_THRESHOLD = isOverAirMode ? 12.0 : 20.0; // Tighter over-air
+const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
+const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
+const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
+const COOLDOWN_DURATION = 45.0; // seconds
+const REQUIRED_VOTES = isOverAirMode ? 3 : 2;
           
           // ===== STATE: IDLE =====
           if (fsmState === 'IDLE') {
@@ -2111,7 +2112,8 @@
             // PROGRESSIVE VALIDATION (get unlock working, then tighten)
             
             // Layer 1: CORE CRITERIA (correlation, PSR, Z-score)
-            const corePass = corrPass && psrPass && zPass;
+const corePass = corrPass && psrPass && zPass;
+            const integrityPass = energyBalancePass && guardsPass;
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
             const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
@@ -2129,7 +2131,8 @@
             // Layer 4: MEDIAN DELTA VALIDATION - Relaxed threshold
             const medianDeltaValidation = medianDelta >= MEDIAN_DELTA_THRESHOLD; // Back to normal
             
-            if (corePass && medianDeltaValidation) {
+const gatePass = isOverAirMode ? (corePass && integrityPass && medianDeltaValidation) : (corePass && medianDeltaValidation);
+            if (gatePass) {
               // Store detection with metadata
               const detection = {
                 time: now,
@@ -2150,28 +2153,28 @@
               codeRepeatTimestamps.push(now);
               window.detectionPolarities.push(detectionPolarity);
               
-              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/2 (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${REQUIRED_VOTES} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
               
               // Layer 5: REQUIRE 2 DETECTIONS with proper cadence
-              if (codeRepeatTimestamps.length >= 2) {
+              if (codeRepeatTimestamps.length >= REQUIRED_VOTES) {
                 const lastTwo = codeRepeatTimestamps.slice(-2);
                 const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
                 const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
                 
                 // Relaxed cadence: ±50% tolerance (was ±30%)
-                const tolerance = 0.5;
+const tolerance = 0.5;
                 const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
                 
-                // Also accept per-symbol cadence (rapid detections)
+                // Also compute per-symbol cadence (rapid detections)
                 const perSymbolMatch = Math.abs(deltaT - symbolMs) <= symbolMs * 0.5;
-                const cadenceOk = cadenceMatch || perSymbolMatch;
+                // Over-Air: forbid per-symbol-only confirmations
+                const cadenceOk = isOverAirMode ? cadenceMatch : (cadenceMatch || perSymbolMatch);
                 
                 console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms or ${symbolMs.toFixed(0)}ms) ${cadenceOk?'✅':'❌'}`);
                 
-                // Layer 6: POLARITY CONSISTENCY (diagnostic only, not blocking)
-                const polarities = window.detectionPolarities.slice(-2);
-                const polarityConsistent = polarities[0] === polarities[1];
+const polarities = window.detectionPolarities.slice(-REQUIRED_VOTES);
+                const polarityConsistent = polarities.every(p => p === polarities[0]);
                 console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
                 
             // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
@@ -2181,7 +2184,7 @@
             const txValidationPass = isOverAirMode ? true : allTxOn;
             console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
             
-            if (cadenceOk && txValidationPass) {
+            if (cadenceOk && txValidationPass && (!isOverAirMode || polarityConsistent)) {
               // 🎉 UNLOCK!
               fsmState = 'UNLOCKED';
               fsmLockoutUntil = now + COOLDOWN_DURATION;
@@ -2193,7 +2196,7 @@
               
               // Log detection quality for analysis
               console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-              console.log(`  ├─ Detections: 2/2 (interval: ${deltaT.toFixed(0)}ms)`);
+              console.log(`  ├─ Detections: ${REQUIRED_VOTES}/${REQUIRED_VOTES} (interval: ${deltaT.toFixed(0)}ms)`);
               console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
               console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
               console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
