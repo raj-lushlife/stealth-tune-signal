@@ -1706,7 +1706,11 @@
       // Start detection loop
       const symbolDurationInput = document.getElementById('rxSpectralSymbolDuration') || document.getElementById('spectralSymbolDuration');
       const symbolDurationMs = parseFloat(symbolDurationInput.value);
-      rxInterval = setInterval(detectSpectralSymbol, symbolDurationMs);
+      // Oversample symbol detection to improve alignment with TX (default ×3 ~20ms frames for 60ms symbols)
+      window.SYMBOL_OVERSAMPLE = window.SYMBOL_OVERSAMPLE || 3;
+      const OVERSAMPLE = window.SYMBOL_OVERSAMPLE;
+      const frameMs = Math.max(10, symbolDurationMs / OVERSAMPLE);
+      rxInterval = setInterval(detectSpectralSymbol, frameMs);
     }
     
     function detectSpectralSymbol() {
