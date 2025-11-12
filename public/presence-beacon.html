@@ -2005,11 +2005,11 @@
             return;
           }
           
-          // FSM thresholds - adjust for iPhone Mode (over-air detection)
-          const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          const CORR_THRESHOLD = isIphoneMode ? 0.20 : 0.30; // Lower for iPhone over-air
-          const PSR_THRESHOLD = isIphoneMode ? 4.0 : 6.0; // Lower for iPhone over-air
-          const Z_THRESHOLD = isIphoneMode ? 2.5 : 3.0; // Lower for iPhone over-air
+          // FSM thresholds - STRICTER for Over-Air Mode to prevent false positives
+          const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+          const CORR_THRESHOLD = isOverAirMode ? 0.45 : 0.30; // HIGHER for over-air (reject weak correlations)
+          const PSR_THRESHOLD = isOverAirMode ? 8.0 : 6.0; // HIGHER for over-air (require cleaner peaks)
+          const Z_THRESHOLD = isOverAirMode ? 4.0 : 3.0; // HIGHER for over-air (stronger statistical significance)
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
