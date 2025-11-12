@@ -654,6 +654,24 @@
             ⚠️ Start RX FIRST (before TX) to calibrate noise baseline!
           </div>
           <div class="subsection">
+            <h3>RX Tuning</h3>
+            <div class="grid-2col">
+              <div class="control-group">
+                <label>RX Center Frequency (Hz):</label>
+                <input type="number" id="rxSpectralCenterFreq" value="12000" min="4000" max="18000" step="100">
+              </div>
+              <div class="control-group">
+                <label>RX Bin Spacing (Hz):</label>
+                <input type="number" id="rxSpectralBinSpacing" value="50" min="30" max="100" step="10">
+              </div>
+              <div class="control-group">
+                <label>RX Symbol Duration (ms):</label>
+                <input type="number" id="rxSpectralSymbolDuration" value="60" min="40" max="120" step="5">
+              </div>
+            </div>
+            <div class="readout">Set RX to match the TX device (e.g., 6000 Hz center on iPhone).</div>
+          </div>
+          <div class="subsection">
             <h3>Correlation Detection</h3>
             <div class="band-display">
               <div class="band-meter">
@@ -1686,7 +1704,8 @@
       console.log(`  └─ Calibrating noise baseline for 5 seconds before detection...`);
       
       // Start detection loop
-      const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
+      const symbolDurationInput = document.getElementById('rxSpectralSymbolDuration') || document.getElementById('spectralSymbolDuration');
+      const symbolDurationMs = parseFloat(symbolDurationInput.value);
       rxInterval = setInterval(detectSpectralSymbol, symbolDurationMs);
     }
     
@@ -1729,8 +1748,10 @@
       }
       
       // Get parameters
-      const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
-      const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
+      const centerInput = document.getElementById('rxSpectralCenterFreq') || document.getElementById('spectralCenterFreq');
+      const spacingInput = document.getElementById('rxSpectralBinSpacing') || document.getElementById('spectralBinSpacing');
+      const centerFreq = parseFloat(centerInput.value);
+      const binSpacing = parseFloat(spacingInput.value);
       
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
@@ -2159,7 +2180,8 @@ const gatePass = isOverAirMode ? (corePass && integrityPass && medianDeltaValida
               if (codeRepeatTimestamps.length >= REQUIRED_VOTES) {
                 const lastTwo = codeRepeatTimestamps.slice(-2);
                 const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
-                const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
+                const symbolInput = document.getElementById('rxSpectralSymbolDuration') || document.getElementById('spectralSymbolDuration');
+                const symbolMs = parseFloat(symbolInput.value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
                 
                 // Relaxed cadence: ±50% tolerance (was ±30%)
