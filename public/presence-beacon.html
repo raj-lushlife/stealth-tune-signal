@@ -764,6 +764,18 @@
           </label>
         </div>
 
+        <div id="validationStatus" style="margin: 16px 0; padding: 16px; background: linear-gradient(135deg, rgba(0,100,200,0.08), rgba(0,150,255,0.12)); border-left: 4px solid #0066cc; border-radius: 8px; font-size: 13px; display: none;">
+          <div style="font-weight: 700; margin-bottom: 10px; color: #0066cc; font-size: 14px;">🛡️ Iron-Clad Validation Active</div>
+          <div id="validationList" style="line-height: 2; color: #1a1a1a;">
+            ✓ Correlation ≥ 0.20 (pattern match)<br>
+            ✓ PSR ≥ 6.0 dB (signal power ratio)<br>
+            ✓ Z-score ≥ 2.5 (statistical significance)<br>
+            ✓ Cadence: 60ms ±20ms (precise timing)<br>
+            ✓ Correlation consistency ±0.1 (stable)<br>
+            ✓ Dynamic polarity correction
+          </div>
+        </div>
+
         <div class="button-row">
           <button id="startRxBtn" class="btn">Start RX</button>
           <button id="stopRxBtn" class="btn btn-stop" disabled>Stop RX</button>
@@ -2974,6 +2986,13 @@
     document.getElementById('startRxBtn').addEventListener('click', startRX);
     document.getElementById('stopRxBtn').addEventListener('click', stopRX);
     document.getElementById('resetRxBtn').addEventListener('click', resetRX);
+    
+    // Over-Air Mode toggle with validation display
+    document.getElementById('overAirMode').addEventListener('change', (e) => {
+      console.log(`📡 Over-Air Mode: ${e.target.checked ? 'ENABLED' : 'DISABLED'}`);
+      document.getElementById('validationStatus').style.display = e.target.checked ? 'block' : 'none';
+    });
+    
     document.getElementById('recalibrateBtn').addEventListener('click', () => {
       if (rxRunning && currentMode === 'spectral') {
         // Reset baseline state
