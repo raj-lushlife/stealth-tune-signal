@@ -2046,7 +2046,8 @@
               
               console.log(`🎵 FSM: IDLE → CODE_LOCK`);
               console.log(`  ├─ Trigger: corr=${correlation.toFixed(3)} (≥${(CORR_THRESHOLD*0.7).toFixed(3)}), psr=${peakToSidelobeRatio.toFixed(1)}dB (≥${(PSR_THRESHOLD*0.6).toFixed(1)}dB)`);
-              console.log(`  └─ Required for unlock: 2 detections with proper cadence`);
+              const requiredVotesIdle = isOverAirMode ? 3 : 2;
+              console.log(`  └─ Required for unlock: ${requiredVotesIdle} detections with proper cadence`);
               updateFSMStateDisplay();
             }
             
@@ -2150,6 +2151,7 @@
                 psr: peakToSidelobeRatio,
                 zScore: zScore,
                 medianDelta: medianDelta,
+                phase: best.phase,
                 txWasRunning: txRunning
               };
               
@@ -2162,7 +2164,8 @@
               codeRepeatTimestamps.push(now);
               window.detectionPolarities.push(detectionPolarity);
               
-              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/2 (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
+              const votesRequiredInline = isOverAirMode ? 3 : 2;
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${votesRequiredInline} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
               
               // Layer 5: REQUIRE N DETECTIONS with proper cadence (stricter in Over-Air Mode)
               const requiredVotes = isOverAirMode ? 3 : 2;
@@ -2205,18 +2208,30 @@
                   console.log(`  ├─ [correlation consistency] ${corrs.map(c => c.toFixed(3)).join(' vs ')} (range=${corrDiff.toFixed(3)}, ≤0.1) ${correlationConsistencyPass ? '✅' : '❌'}`);
                 }
 
-                // FINAL HARD GATE: every vote must individually meet core thresholds
+                // Layer 9: PHASE CONSISTENCY (Over-Air Mode only)
+                let phaseConsistencyPass = true;
+                if (isOverAirMode) {
+                  const phases = detections.map(d => d.phase ?? -1);
+                  const allEqual = phases.every(p => p === phases[0]);
+                  phaseConsistencyPass = allEqual;
+                  console.log(`  ├─ [phase consistency] phases=[${phases.join(', ')}] ${phaseConsistencyPass ? '✅' : '❌'}`);
+                }
+
+                // FINAL HARD GATE: stricter thresholds in Over-Air Mode
+                const FINAL_CORR = isOverAirMode ? Math.max(CORR_THRESHOLD, 0.26) : CORR_THRESHOLD;
+                const FINAL_PSR = isOverAirMode ? Math.max(PSR_THRESHOLD, 8.0) : PSR_THRESHOLD;
+                const FINAL_Z = isOverAirMode ? Math.max(Z_THRESHOLD, 3.0) : Z_THRESHOLD;
                 const finalCorePass = detections.every(d => (
-                  d.correlation >= CORR_THRESHOLD && d.psr >= PSR_THRESHOLD && d.zScore >= Z_THRESHOLD
+                  d.correlation >= FINAL_CORR && d.psr >= FINAL_PSR && d.zScore >= FINAL_Z
                 ));
                 if (!finalCorePass) {
                   const summary = detections.map(d => `[c=${d.correlation.toFixed(3)}, p=${d.psr.toFixed(1)}dB, z=${d.zScore.toFixed(2)}]`).join(', ');
-                  console.log(`  ├─ [final core check] ${summary} requires corr≥${CORR_THRESHOLD}, PSR≥${PSR_THRESHOLD}dB, Z≥${Z_THRESHOLD} ❌`);
+                  console.log(`  ├─ [final core check] ${summary} requires corr≥${FINAL_CORR}, PSR≥${FINAL_PSR}dB, Z≥${FINAL_Z} ❌`);
                 } else {
                   console.log(`  ├─ [final core check] ✅ all detections meet thresholds`);
                 }
 
-                if (cadenceOk && txValidationPass && correlationConsistencyPass && finalCorePass) {
+                if (cadenceOk && txValidationPass && correlationConsistencyPass && phaseConsistencyPass && finalCorePass) {
                   // 🎉 UNLOCK!
                   fsmState = 'UNLOCKED';
                   fsmLockoutUntil = now + COOLDOWN_DURATION;
