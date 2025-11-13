@@ -2162,17 +2162,20 @@
                 // STRICT cadence for Over-Air Mode: only accept per-symbol timing (60ms ±20ms)
                 // This rejects unencoded audio which won't have this precise timing
                 const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+                let cadenceOk = false;
+                let cadenceReason = '';
+                
                 if (isOverAirMode) {
                   // In Over-Air Mode: ONLY accept 60ms ±20ms (per-symbol cadence)
-                  const cadenceOk = Math.abs(deltaT - symbolMs) <= 20; // ±20ms tolerance
-                  var cadenceReason = `per-symbol (60ms ±20ms)`;
+                  cadenceOk = Math.abs(deltaT - symbolMs) <= 20; // ±20ms tolerance
+                  cadenceReason = `per-symbol (60ms ±20ms)`;
                 } else {
                   // Normal mode: accept either full repeat or per-symbol
                   const tolerance = 0.5;
                   const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
                   const perSymbolMatch = Math.abs(deltaT - symbolMs) <= symbolMs * 0.5;
-                  var cadenceOk = cadenceMatch || perSymbolMatch;
-                  var cadenceReason = `full repeat or per-symbol`;
+                  cadenceOk = cadenceMatch || perSymbolMatch;
+                  cadenceReason = `full repeat or per-symbol`;
                 }
                 
                 console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${cadenceReason}) ${cadenceOk?'✅':'❌'}`);
@@ -2185,14 +2188,12 @@
             // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
             const detections = window.detectionHistory.slice(-2);
             const allTxOn = detections.every(d => d.txWasRunning);
-            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
             const txValidationPass = isOverAirMode ? true : allTxOn;
             console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
             
             // Layer 8: CORRELATION CONSISTENCY (Over-Air Mode only)
             // Require both detections to have similar correlation (within 0.1)
             // This rejects random noise spikes that might pass once but not consistently
-            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
             let correlationConsistencyPass = true;
             if (isOverAirMode) {
               const lastTwoCorr = detections.slice(-2).map(d => d.correlation);
