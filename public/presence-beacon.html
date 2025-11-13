@@ -653,6 +653,34 @@
           <div class="warning-banner show" style="background: #2196F3; color: white; display: block;">
             ⚠️ Start RX FIRST (before TX) to calibrate noise baseline!
           </div>
+
+          <!-- RX Configuration Section -->
+          <div class="subsection" style="background: rgba(33, 150, 243, 0.1); border-left: 3px solid #2196F3; padding: 15px; margin-bottom: 20px;">
+            <h3>📡 RX Configuration (Must Match TX Settings)</h3>
+            <div class="grid-2col">
+              <div class="control-group">
+                <label>RX Center Frequency (Hz):</label>
+                <input type="number" id="rxSpectralCenterFreq" value="12000" min="8000" max="18000" step="100">
+              </div>
+              <div class="control-group">
+                <label>RX Bin Spacing (Hz):</label>
+                <input type="number" id="rxSpectralBinSpacing" value="50" min="30" max="100" step="10">
+              </div>
+              <div class="control-group">
+                <label>RX Symbol Duration (ms):</label>
+                <input type="number" id="rxSpectralSymbolDuration" value="60" min="40" max="120" step="5">
+              </div>
+              <div class="control-group">
+                <button id="copyTxToRxBtn" class="btn btn-secondary" style="margin-top: 20px;">
+                  📋 Copy TX Settings → RX
+                </button>
+              </div>
+            </div>
+            <div class="readout" style="margin-top: 10px; font-size: 11px; color: #2196F3;">
+              💡 <strong>CRITICAL:</strong> RX settings must EXACTLY match TX settings for detection to work. Use "Copy TX Settings" button to sync automatically.
+            </div>
+          </div>
+
           <div class="subsection">
             <h3>Correlation Detection</h3>
             <div class="band-display">
@@ -848,6 +876,15 @@
     let txRunning = false;
     let rxRunning = false;
     let currentMode = 'spectral'; // 'spectral' or 'legacy'
+    
+    // TX Configuration (logged when TX starts for verification)
+    let txConfig = {
+      centerFreq: 12000,
+      binSpacing: 50,
+      symbolDuration: 60,
+      freqA: 0,
+      freqB: 0
+    };
 
     // TX State
     let bedBuffer = null;
@@ -1155,9 +1192,26 @@
       const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
       const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
       const symbolGain = parseFloat(document.getElementById('spectralGain').value); // Use UI slider
+      const symbolDuration = parseFloat(document.getElementById('spectralSymbolDuration').value);
       
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
+      
+      // Store TX config for verification
+      txConfig = {
+        centerFreq,
+        binSpacing,
+        symbolDuration,
+        freqA,
+        freqB
+      };
+      
+      console.log('🎯 TX CONFIGURATION:');
+      console.log(`  ├─ Center Frequency: ${centerFreq}Hz`);
+      console.log(`  ├─ Bin Spacing: ${binSpacing}Hz`);
+      console.log(`  ├─ Symbol Duration: ${symbolDuration}ms`);
+      console.log(`  ├─ Freq A (Bin -): ${freqA.toFixed(0)}Hz`);
+      console.log(`  └─ Freq B (Bin +): ${freqB.toFixed(0)}Hz`);
       
       // Create two narrow peaking filters for bins A and B
       // Q=50 gives ~240Hz bandwidth at 12kHz - optimal balance
@@ -1728,12 +1782,38 @@
         console.log(`  └─ Audio input ${mean > -80 ? '✅ ACTIVE' : '❌ TOO QUIET - CHECK MIC'}`);
       }
       
-      // Get parameters
-      const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
-      const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
+      // Get RX parameters (from dedicated RX controls)
+      const rxCenterFreq = parseFloat(document.getElementById('rxSpectralCenterFreq').value);
+      const rxBinSpacing = parseFloat(document.getElementById('rxSpectralBinSpacing').value);
+      const rxSymbolDuration = parseFloat(document.getElementById('rxSpectralSymbolDuration').value);
       
-      const freqA = centerFreq - binSpacing / 2;
-      const freqB = centerFreq + binSpacing / 2;
+      const freqA = rxCenterFreq - rxBinSpacing / 2;
+      const freqB = rxCenterFreq + rxBinSpacing / 2;
+      
+      // Log RX config periodically for verification
+      if (frameNum === 1) {
+        console.log('🎤 RX CONFIGURATION:');
+        console.log(`  ├─ RX Center Frequency: ${rxCenterFreq}Hz`);
+        console.log(`  ├─ RX Bin Spacing: ${rxBinSpacing}Hz`);
+        console.log(`  ├─ RX Symbol Duration: ${rxSymbolDuration}ms`);
+        console.log(`  ├─ RX Freq A (Bin -): ${freqA.toFixed(0)}Hz`);
+        console.log(`  └─ RX Freq B (Bin +): ${freqB.toFixed(0)}Hz`);
+        
+        // Verify TX/RX alignment if TX is running
+        if (txRunning && txConfig.centerFreq > 0) {
+          console.log('🔍 TX/RX ALIGNMENT CHECK:');
+          const centerMatch = Math.abs(rxCenterFreq - txConfig.centerFreq) < 1;
+          const spacingMatch = Math.abs(rxBinSpacing - txConfig.binSpacing) < 1;
+          const durationMatch = Math.abs(rxSymbolDuration - txConfig.symbolDuration) < 1;
+          console.log(`  ├─ Center Freq: ${centerMatch ? '✅' : '❌'} (TX: ${txConfig.centerFreq}Hz, RX: ${rxCenterFreq}Hz)`);
+          console.log(`  ├─ Bin Spacing: ${spacingMatch ? '✅' : '❌'} (TX: ${txConfig.binSpacing}Hz, RX: ${rxBinSpacing}Hz)`);
+          console.log(`  └─ Symbol Duration: ${durationMatch ? '✅' : '❌'} (TX: ${txConfig.symbolDuration}ms, RX: ${rxSymbolDuration}ms)`);
+          
+          if (!centerMatch || !spacingMatch || !durationMatch) {
+            console.error('⚠️ TX/RX MISMATCH DETECTED! Use "Copy TX Settings → RX" button to sync.');
+          }
+        }
+      }
       
       // DIAGNOSTIC: Calculate FFT bin indices
       const binIndexA = Math.round(freqA / binHz);
@@ -2195,8 +2275,50 @@
               if (signMatchRatio < 0.75) {
                 console.log(`  └─ ❌ SIGN PATTERN MISMATCH: ${signPct}% < 75% (likely unencoded)`);
                 return; // Reject candidate as false positive
-              } else {
-                if (frameCount % 30 === 0) console.log(`  └─ ✅ SIGN PATTERN MATCH: ${signPct}% ≥ 75%`);
+              }
+              
+              // Layer 4.7: STRICT FREQUENCY-HOPPING VERIFICATION
+              // Verify that the actual bin A/B power pattern matches the PN31 code
+              // This is the KEY to rejecting unencoded audio
+              try {
+                const binAHistory = [];
+                const binBHistory = [];
+                
+                // Get recent FFT history to check frequency-hopping pattern
+                // We need to check if powerA > powerB when PN code is +1, and vice versa
+                const recentFrames = Math.min(codeLen, spectralSymbolBuffer.length);
+                
+                // For strict verification: check that the frequency pattern in the last
+                // codeLen symbols matches the PN31 code
+                let frequencyPatternMatches = 0;
+                const bestStart = spectralSymbolBuffer.length - codeLen - best.phase;
+                
+                // We check: does the sign of (powerA - powerB) match the PN code?
+                // If PN code is +1, we expect powerB > powerA (positive delta)
+                // If PN code is -1, we expect powerA > powerB (negative delta)
+                const patternSeg = spectralSymbolBuffer.slice(bestStart, bestStart + codeLen);
+                
+                for (let i = 0; i < codeLen; i++) {
+                  const expectedSign = best.sign * PN31_CODE[i];
+                  const observedSign = patternSeg[i] >= 0 ? 1 : -1;
+                  if (expectedSign * observedSign > 0) {
+                    frequencyPatternMatches++;
+                  }
+                }
+                
+                const frequencyMatchRatio = frequencyPatternMatches / codeLen;
+                const freqPct = Math.round(frequencyMatchRatio * 100);
+                
+                // Require 80% frequency pattern match for Over-Air Mode
+                if (frequencyMatchRatio < 0.80) {
+                  console.log(`  └─ ❌ FREQUENCY HOPPING MISMATCH: ${freqPct}% < 80% (unencoded audio has random frequency content)`);
+                  return; // Reject - unencoded audio won't have the correct frequency pattern
+                } else {
+                  if (frameCount % 30 === 0) console.log(`  └─ ✅ FREQUENCY HOPPING VERIFIED: ${freqPct}% ≥ 80%`);
+                }
+              } catch (e) {
+                console.log(`  └─ ❌ FREQUENCY HOPPING VERIFICATION ERROR: ${e.message}`);
+                return;
               }
             }
             
@@ -3044,6 +3166,22 @@
     // RX
     document.getElementById('startRxBtn').addEventListener('click', startRX);
     document.getElementById('stopRxBtn').addEventListener('click', stopRX);
+    
+    // Copy TX to RX button
+    document.getElementById('copyTxToRxBtn').addEventListener('click', () => {
+      const txCenterFreq = document.getElementById('spectralCenterFreq').value;
+      const txBinSpacing = document.getElementById('spectralBinSpacing').value;
+      const txSymbolDuration = document.getElementById('spectralSymbolDuration').value;
+      
+      document.getElementById('rxSpectralCenterFreq').value = txCenterFreq;
+      document.getElementById('rxSpectralBinSpacing').value = txBinSpacing;
+      document.getElementById('rxSpectralSymbolDuration').value = txSymbolDuration;
+      
+      console.log('✅ TX settings copied to RX:');
+      console.log(`  ├─ Center Frequency: ${txCenterFreq}Hz`);
+      console.log(`  ├─ Bin Spacing: ${txBinSpacing}Hz`);
+      console.log(`  └─ Symbol Duration: ${txSymbolDuration}ms`);
+    });
     document.getElementById('resetRxBtn').addEventListener('click', resetRX);
     document.getElementById('recalibrateBtn').addEventListener('click', () => {
       if (rxRunning && currentMode === 'spectral') {
