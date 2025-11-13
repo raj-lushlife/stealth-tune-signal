@@ -2148,12 +2148,13 @@
               // Require 3+ consecutive candidates within 300ms with stable correlation (±0.03)
               const recentCandidates = window.candidateCorrelationBuffer.filter(c => now - c.time < 0.3);
               let patternConsistent = false;
+              let corrVariance = Infinity;
               
               if (recentCandidates.length >= 3) {
                 const correlations = recentCandidates.map(c => c.correlation);
                 const maxCorr = Math.max(...correlations);
                 const minCorr = Math.min(...correlations);
-                const corrVariance = maxCorr - minCorr;
+                corrVariance = maxCorr - minCorr;
                 patternConsistent = corrVariance <= 0.03; // ±0.03 stability
                 
                 if (frameCount % 20 === 0) {
@@ -2161,14 +2162,17 @@
                 }
               }
               
-              // Only proceed if pattern is consistent (or not enough candidates yet)
-              if (recentCandidates.length < 3 || patternConsistent) {
-                // Pattern is consistent or still building - proceed
-              } else {
+              // Require pattern to be present before accepting a detection
+              if (recentCandidates.length < 3) {
+                console.log(`  └─ ⏳ PATTERN BUILDING: ${recentCandidates.length}/3 candidates collected (300ms window)`);
+                return; // Not enough stability evidence yet
+              }
+              if (!patternConsistent) {
                 // Pattern inconsistent - reject this candidate
-                console.log(`  └─ ❌ PATTERN INCONSISTENT: correlation variance ${(maxCorr - minCorr).toFixed(3)} > 0.03 (likely noise)`);
+                console.log(`  └─ ❌ PATTERN INCONSISTENT: correlation variance ${corrVariance.toFixed(3)} > 0.03 (likely noise)`);
                 return; // Skip this candidate
               }
+              // else: pattern consistent with ≥3 candidates → proceed
             }
             
             if (corePass && medianDeltaValidation) {
