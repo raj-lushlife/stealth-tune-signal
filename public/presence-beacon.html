@@ -1839,8 +1839,8 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
         // Compute correlation on recent buffer for baseline (once we have enough samples)
         if (spectralSymbolBuffer.length >= PN31_CODE.length) {
           const recentSeg = spectralSymbolBuffer.slice(-PN31_CODE.length);
-          const corrPos = computeCorrelation(recentSeg, PN31_CODE);
-          const corrNeg = computeCorrelation(recentSeg, PN31_CODE.map(v => -v));
+          const corrPos = computeCombinedCorrelation(recentSeg, PN31_CODE);
+          const corrNeg = computeCombinedCorrelation(recentSeg, PN31_CODE.map(v => -v));
           const corrPeak = Math.max(corrPos, corrNeg);
           window.baselineCorrelationSamples.push(corrPeak);
         }
@@ -1961,16 +1961,15 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
             const start = spectralSymbolBuffer.length - codeLen - p;
             if (start >= 0) {
               const seg = spectralSymbolBuffer.slice(start, start + codeLen);
-              const corrPos = computeCorrelation(seg, PN31_CODE);
-              const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
-              const corr = Math.max(corrPos, corrNeg);
-              const sign = corrNeg > corrPos ? -1 : 1;
+              const combPos = computeCombinedCorrelation(seg, PN31_CODE);
+              const combNeg = computeCombinedCorrelation(seg, PN31_CODE.map(v => -v));
+              const corr = Math.max(combPos, combNeg);
+              const sign = combNeg > combPos ? -1 : 1;
               allCorrelations.push(corr);
               if (corr > best.corr) best = { corr, phase: p, sign };
-              
               // DIAGNOSTIC: Log correlation details for best phase
               if (frameNum % 120 === 0 && p === 0) {
-                console.log(`  ├─ Phase ${p}: corrPos=${corrPos.toFixed(3)}, corrNeg=${corrNeg.toFixed(3)}, best=${corr.toFixed(3)} (sign=${sign > 0 ? '+' : '-'})`);
+                console.log(`  ├─ Phase ${p}: combPos=${combPos.toFixed(3)}, combNeg=${combNeg.toFixed(3)}, best=${corr.toFixed(3)} (sign=${sign > 0 ? '+' : '-'})`);
               }
             }
           }
@@ -2297,6 +2296,26 @@ const polarities = window.detectionPolarities.slice(-REQUIRED_VOTES);
       }
       const denom = Math.sqrt(varS * varC);
       return denom > 1e-6 ? num / denom : 0;
+    }
+
+    function computeSignCorrelation(signal, code) {
+      // Sign-only correlation: fraction of matching signs mapped to [-1, 1]
+      if (signal.length !== code.length) return 0;
+      let matches = 0;
+      for (let i = 0; i < signal.length; i++) {
+        const s = signal[i] >= 0 ? 1 : -1;
+        const c = code[i] >= 0 ? 1 : -1;
+        if (s === c) matches++;
+      }
+      const frac = matches / signal.length; // [0,1]
+      return frac * 2 - 1; // [-1,1]
+    }
+
+    function computeCombinedCorrelation(signal, code) {
+      // Weighted blend of Pearson and sign-only for robustness and sensitivity
+      const pearson = computeCorrelation(signal, code);
+      const signc = computeSignCorrelation(signal, code);
+      return Math.max(-1, Math.min(1, 0.5 * pearson + 0.5 * signc));
     }
 
     // ==================== LEGACY NOTCH RX ====================
