@@ -1954,6 +1954,20 @@
           }
           const correlation = best.corr;
           
+          // Compute sign-pattern agreement for best phase and polarity
+          let signMatchRatio = 0;
+          try {
+            const bestStart = spectralSymbolBuffer.length - codeLen - best.phase;
+            const bestSeg = spectralSymbolBuffer.slice(bestStart, bestStart + codeLen);
+            let matches = 0;
+            for (let i = 0; i < codeLen; i++) {
+              const expected = best.sign * PN31_CODE[i];
+              const observedSign = bestSeg[i] >= 0 ? 1 : -1;
+              if ((expected >= 0 ? 1 : -1) === observedSign) matches++;
+            }
+            signMatchRatio = matches / codeLen;
+          } catch (e) { signMatchRatio = 0; }
+          
           // Compute Peak-to-Sidelobe Ratio (PSR)
           // Sidelobe = mean of all non-peak correlations
           const sidelobes = allCorrelations.filter((c, i) => i !== best.phase);
@@ -2105,7 +2119,8 @@
               console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
               console.log(`  ├─ [median|Δ|] ${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'}`);
               console.log(`  ├─ [energy] dev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
-              console.log(`  └─ [guards] Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB (≤${GUARD_THRESHOLD}) ${guardsPass?'✅':'❌'}`);
+              console.log(`  ├─ [guards] Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB (≤${GUARD_THRESHOLD}) ${guardsPass?'✅':'❌'}`);
+              console.log(`  └─ [sign-pattern] ${(signMatchRatio*100).toFixed(0)}% (≥75%) ${signMatchRatio>=0.75?'✅':'❌'}`);
             }
             
             // PROGRESSIVE VALIDATION (get unlock working, then tighten)
@@ -2173,6 +2188,16 @@
                 return; // Skip this candidate
               }
               // else: pattern consistent with ≥3 candidates → proceed
+
+              // Layer 4.6: SIGN PATTERN AGREEMENT (Over-Air Mode)
+              // Require ≥75% chip sign agreement with PN sequence at best phase/polarity
+              const signPct = Math.round(signMatchRatio * 100);
+              if (signMatchRatio < 0.75) {
+                console.log(`  └─ ❌ SIGN PATTERN MISMATCH: ${signPct}% < 75% (likely unencoded)`);
+                return; // Reject candidate as false positive
+              } else {
+                if (frameCount % 30 === 0) console.log(`  └─ ✅ SIGN PATTERN MATCH: ${signPct}% ≥ 75%`);
+              }
             }
             
             if (corePass && medianDeltaValidation) {
