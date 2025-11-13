@@ -654,24 +654,6 @@
             ⚠️ Start RX FIRST (before TX) to calibrate noise baseline!
           </div>
           <div class="subsection">
-            <h3>RX Tuning</h3>
-            <div class="grid-2col">
-              <div class="control-group">
-                <label>RX Center Frequency (Hz):</label>
-                <input type="number" id="rxSpectralCenterFreq" value="12000" min="4000" max="18000" step="100">
-              </div>
-              <div class="control-group">
-                <label>RX Bin Spacing (Hz):</label>
-                <input type="number" id="rxSpectralBinSpacing" value="50" min="30" max="100" step="10">
-              </div>
-              <div class="control-group">
-                <label>RX Symbol Duration (ms):</label>
-                <input type="number" id="rxSpectralSymbolDuration" value="60" min="40" max="120" step="5">
-              </div>
-            </div>
-            <div class="readout">Set RX to match the TX device (e.g., 6000 Hz center on iPhone).</div>
-          </div>
-          <div class="subsection">
             <h3>Correlation Detection</h3>
             <div class="band-display">
               <div class="band-meter">
@@ -781,7 +763,6 @@
             <span style="opacity: 0.7; font-size: 0.9em;">(Bypass TX validation - for cross-device testing only)</span>
           </label>
         </div>
-
 
         <div class="button-row">
           <button id="startRxBtn" class="btn">Start RX</button>
@@ -1705,8 +1686,7 @@
       console.log(`  └─ Calibrating noise baseline for 5 seconds before detection...`);
       
       // Start detection loop
-      const symbolDurationInput = document.getElementById('rxSpectralSymbolDuration') || document.getElementById('spectralSymbolDuration');
-      const symbolDurationMs = parseFloat(symbolDurationInput.value);
+      const symbolDurationMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
       rxInterval = setInterval(detectSpectralSymbol, symbolDurationMs);
     }
     
@@ -1749,10 +1729,8 @@
       }
       
       // Get parameters
-      const centerInput = document.getElementById('rxSpectralCenterFreq') || document.getElementById('spectralCenterFreq');
-      const spacingInput = document.getElementById('rxSpectralBinSpacing') || document.getElementById('spectralBinSpacing');
-      const centerFreq = parseFloat(centerInput.value);
-      const binSpacing = parseFloat(spacingInput.value);
+      const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
+      const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
       
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
@@ -1805,8 +1783,8 @@
       const alpha = 0.3; // ~200ms EMA
       spectralBroadbandEMA = spectralBroadbandEMA * (1 - alpha) + broadbandPower * alpha;
       
-// Loudness veto: enabled in Over-Air Mode to block sudden broadband bursts (shouts/claps)
-const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) && ((broadbandPower - spectralBroadbandEMA) > 12);
+      // Loudness veto: DISABLED (was blocking too many valid frames)
+      const loudnessVeto = false; // (broadbandPower - spectralBroadbandEMA > 18);
       
       // Update display
       document.getElementById('loudnessLevel').textContent = broadbandPower.toFixed(1) + ' dB';
@@ -1839,8 +1817,8 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
         // Compute correlation on recent buffer for baseline (once we have enough samples)
         if (spectralSymbolBuffer.length >= PN31_CODE.length) {
           const recentSeg = spectralSymbolBuffer.slice(-PN31_CODE.length);
-          const corrPos = computeCombinedCorrelation(recentSeg, PN31_CODE);
-          const corrNeg = computeCombinedCorrelation(recentSeg, PN31_CODE.map(v => -v));
+          const corrPos = computeCorrelation(recentSeg, PN31_CODE);
+          const corrNeg = computeCorrelation(recentSeg, PN31_CODE.map(v => -v));
           const corrPeak = Math.max(corrPos, corrNeg);
           window.baselineCorrelationSamples.push(corrPeak);
         }
@@ -1944,7 +1922,7 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
           // Phase scan and polarity check
-          const phaseMax = 15; // Check wider phase offsets for better tolerance to timing skew
+          const phaseMax = 7; // Check 8 phase offsets (better tolerance to jitter)
           let best = { corr: -1, phase: 0, sign: 1 };
           let allCorrelations = []; // For PSR calculation
           
@@ -1961,15 +1939,16 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
             const start = spectralSymbolBuffer.length - codeLen - p;
             if (start >= 0) {
               const seg = spectralSymbolBuffer.slice(start, start + codeLen);
-              const combPos = computeCombinedCorrelation(seg, PN31_CODE);
-              const combNeg = computeCombinedCorrelation(seg, PN31_CODE.map(v => -v));
-              const corr = Math.max(combPos, combNeg);
-              const sign = combNeg > combPos ? -1 : 1;
+              const corrPos = computeCorrelation(seg, PN31_CODE);
+              const corrNeg = computeCorrelation(seg, PN31_CODE.map(v => -v));
+              const corr = Math.max(corrPos, corrNeg);
+              const sign = corrNeg > corrPos ? -1 : 1;
               allCorrelations.push(corr);
               if (corr > best.corr) best = { corr, phase: p, sign };
+              
               // DIAGNOSTIC: Log correlation details for best phase
               if (frameNum % 120 === 0 && p === 0) {
-                console.log(`  ├─ Phase ${p}: combPos=${combPos.toFixed(3)}, combNeg=${combNeg.toFixed(3)}, best=${corr.toFixed(3)} (sign=${sign > 0 ? '+' : '-'})`);
+                console.log(`  ├─ Phase ${p}: corrPos=${corrPos.toFixed(3)}, corrNeg=${corrNeg.toFixed(3)}, best=${corr.toFixed(3)} (sign=${sign > 0 ? '+' : '-'})`);
               }
             }
           }
@@ -2026,19 +2005,18 @@ const loudnessVeto = (document.getElementById('overAirMode')?.checked || false) 
             return;
           }
           
-// FSM thresholds - STRICTER for Over-Air Mode to prevent false positives
-const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-const CORR_THRESHOLD = isOverAirMode ? 0.45 : 0.30; // HIGHER for over-air (reject weak correlations)
-const PSR_THRESHOLD = isOverAirMode ? 8.0 : 6.0; // HIGHER for over-air (require cleaner peaks)
-const Z_THRESHOLD = isOverAirMode ? 4.0 : 3.0; // HIGHER for over-air (stronger statistical significance)
-const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
-const ENERGY_BALANCE_THRESHOLD = isOverAirMode ? 3.0 : 5.0; // Tighter over-air
-const GUARD_THRESHOLD = isOverAirMode ? 12.0 : 20.0; // Tighter over-air
-const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
-const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
-const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
-const COOLDOWN_DURATION = 45.0; // seconds
-const REQUIRED_VOTES = isOverAirMode ? 3 : 2;
+          // FSM thresholds - adjust for iPhone Mode (over-air detection)
+          const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
+          const CORR_THRESHOLD = isIphoneMode ? 0.20 : 0.30; // Lower for iPhone over-air
+          const PSR_THRESHOLD = isIphoneMode ? 4.0 : 6.0; // Lower for iPhone over-air
+          const Z_THRESHOLD = isIphoneMode ? 2.5 : 3.0; // Lower for iPhone over-air
+          const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
+          const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
+          const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
+          const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
+          const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
+          const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
+          const COOLDOWN_DURATION = 45.0; // seconds
           
           // ===== STATE: IDLE =====
           if (fsmState === 'IDLE') {
@@ -2133,8 +2111,7 @@ const REQUIRED_VOTES = isOverAirMode ? 3 : 2;
             // PROGRESSIVE VALIDATION (get unlock working, then tighten)
             
             // Layer 1: CORE CRITERIA (correlation, PSR, Z-score)
-const corePass = corrPass && psrPass && zPass;
-            const integrityPass = energyBalancePass && guardsPass;
+            const corePass = corrPass && psrPass && zPass;
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
             const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
@@ -2152,8 +2129,7 @@ const corePass = corrPass && psrPass && zPass;
             // Layer 4: MEDIAN DELTA VALIDATION - Relaxed threshold
             const medianDeltaValidation = medianDelta >= MEDIAN_DELTA_THRESHOLD; // Back to normal
             
-const gatePass = isOverAirMode ? (corePass && integrityPass && medianDeltaValidation) : (corePass && medianDeltaValidation);
-            if (gatePass) {
+            if (corePass && medianDeltaValidation) {
               // Store detection with metadata
               const detection = {
                 time: now,
@@ -2174,29 +2150,28 @@ const gatePass = isOverAirMode ? (corePass && integrityPass && medianDeltaValida
               codeRepeatTimestamps.push(now);
               window.detectionPolarities.push(detectionPolarity);
               
-              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${REQUIRED_VOTES} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/2 (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
               
               // Layer 5: REQUIRE 2 DETECTIONS with proper cadence
-              if (codeRepeatTimestamps.length >= REQUIRED_VOTES) {
+              if (codeRepeatTimestamps.length >= 2) {
                 const lastTwo = codeRepeatTimestamps.slice(-2);
                 const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
-                const symbolInput = document.getElementById('rxSpectralSymbolDuration') || document.getElementById('spectralSymbolDuration');
-                const symbolMs = parseFloat(symbolInput.value);
+                const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
                 
                 // Relaxed cadence: ±50% tolerance (was ±30%)
-const tolerance = 0.5;
+                const tolerance = 0.5;
                 const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
                 
-                // Also compute per-symbol cadence (rapid detections)
+                // Also accept per-symbol cadence (rapid detections)
                 const perSymbolMatch = Math.abs(deltaT - symbolMs) <= symbolMs * 0.5;
-                // Over-Air: forbid per-symbol-only confirmations
-                const cadenceOk = isOverAirMode ? cadenceMatch : (cadenceMatch || perSymbolMatch);
+                const cadenceOk = cadenceMatch || perSymbolMatch;
                 
                 console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms or ${symbolMs.toFixed(0)}ms) ${cadenceOk?'✅':'❌'}`);
                 
-const polarities = window.detectionPolarities.slice(-REQUIRED_VOTES);
-                const polarityConsistent = polarities.every(p => p === polarities[0]);
+                // Layer 6: POLARITY CONSISTENCY (diagnostic only, not blocking)
+                const polarities = window.detectionPolarities.slice(-2);
+                const polarityConsistent = polarities[0] === polarities[1];
                 console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
                 
             // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
@@ -2206,7 +2181,7 @@ const polarities = window.detectionPolarities.slice(-REQUIRED_VOTES);
             const txValidationPass = isOverAirMode ? true : allTxOn;
             console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
             
-            if (cadenceOk && txValidationPass && (!isOverAirMode || polarityConsistent)) {
+            if (cadenceOk && txValidationPass) {
               // 🎉 UNLOCK!
               fsmState = 'UNLOCKED';
               fsmLockoutUntil = now + COOLDOWN_DURATION;
@@ -2218,7 +2193,7 @@ const polarities = window.detectionPolarities.slice(-REQUIRED_VOTES);
               
               // Log detection quality for analysis
               console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-              console.log(`  ├─ Detections: ${REQUIRED_VOTES}/${REQUIRED_VOTES} (interval: ${deltaT.toFixed(0)}ms)`);
+              console.log(`  ├─ Detections: 2/2 (interval: ${deltaT.toFixed(0)}ms)`);
               console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
               console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
               console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
@@ -2280,42 +2255,21 @@ const polarities = window.detectionPolarities.slice(-REQUIRED_VOTES);
     }
     
     function computeCorrelation(signal, code) {
-      // Pearson correlation (mean-centered, normalized) for robustness to DC offsets
+      // Normalized correlation between signal and code
       if (signal.length !== code.length) return 0;
-      const n = signal.length;
-      let meanS = 0, meanC = 0;
-      for (let i = 0; i < n; i++) { meanS += signal[i]; meanC += code[i]; }
-      meanS /= n; meanC /= n;
-      let num = 0, varS = 0, varC = 0;
-      for (let i = 0; i < n; i++) {
-        const s = signal[i] - meanS;
-        const c = code[i] - meanC;
-        num += s * c;
-        varS += s * s;
-        varC += c * c;
-      }
-      const denom = Math.sqrt(varS * varC);
-      return denom > 1e-6 ? num / denom : 0;
-    }
-
-    function computeSignCorrelation(signal, code) {
-      // Sign-only correlation: fraction of matching signs mapped to [-1, 1]
-      if (signal.length !== code.length) return 0;
-      let matches = 0;
+      
+      let sum = 0;
+      let signalSq = 0;
+      let codeSq = 0;
+      
       for (let i = 0; i < signal.length; i++) {
-        const s = signal[i] >= 0 ? 1 : -1;
-        const c = code[i] >= 0 ? 1 : -1;
-        if (s === c) matches++;
+        sum += signal[i] * code[i];
+        signalSq += signal[i] * signal[i];
+        codeSq += code[i] * code[i];
       }
-      const frac = matches / signal.length; // [0,1]
-      return frac * 2 - 1; // [-1,1]
-    }
-
-    function computeCombinedCorrelation(signal, code) {
-      // Weighted blend of Pearson and sign-only for robustness and sensitivity
-      const pearson = computeCorrelation(signal, code);
-      const signc = computeSignCorrelation(signal, code);
-      return Math.max(-1, Math.min(1, 0.5 * pearson + 0.5 * signc));
+      
+      const denom = Math.sqrt(signalSq * codeSq);
+      return denom > 0.001 ? sum / denom : 0;
     }
 
     // ==================== LEGACY NOTCH RX ====================
