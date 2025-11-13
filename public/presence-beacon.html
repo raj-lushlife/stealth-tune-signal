@@ -2164,102 +2164,99 @@
               
               console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/2 (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
               
-              // Layer 5: REQUIRE 2 DETECTIONS with proper cadence
-              if (codeRepeatTimestamps.length >= 2) {
-                const lastTwo = codeRepeatTimestamps.slice(-2);
-                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
+              // Layer 5: REQUIRE N DETECTIONS with proper cadence (stricter in Over-Air Mode)
+              const requiredVotes = isOverAirMode ? 3 : 2;
+              if (codeRepeatTimestamps.length >= requiredVotes) {
+                const times = codeRepeatTimestamps.slice(-requiredVotes);
+                const deltaTs = times.slice(1).map((t, i) => (times[i + 1] - times[i]) * 1000); // ms between votes
                 const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
-                
-                // STRICT cadence for Over-Air Mode: only accept per-symbol timing (60ms ±20ms)
-                // This rejects unencoded audio which won't have this precise timing
-                const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+
+                // STRICT cadence for Over-Air Mode: all deltas must be ~one symbol
                 let cadenceOk = false;
                 let cadenceReason = '';
-                
                 if (isOverAirMode) {
-                  // In Over-Air Mode: ONLY accept 60ms ±20ms (per-symbol cadence)
-                  cadenceOk = Math.abs(deltaT - symbolMs) <= 20; // ±20ms tolerance
-                  cadenceReason = `per-symbol (60ms ±20ms)`;
+                  cadenceOk = deltaTs.every(d => Math.abs(d - symbolMs) <= 20); // ±20ms tolerance for each hop
+                  cadenceReason = `per-symbol (${symbolMs.toFixed(0)}ms ±20ms) x${requiredVotes - 1}`;
                 } else {
-                  // Normal mode: accept either full repeat or per-symbol
+                  // Normal mode: accept either full repeat or at least one per-symbol hop
                   const tolerance = 0.5;
-                  const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
-                  const perSymbolMatch = Math.abs(deltaT - symbolMs) <= symbolMs * 0.5;
+                  const cadenceMatch = Math.abs(deltaTs[deltaTs.length - 1] - expectedRepeatMs) <= expectedRepeatMs * tolerance;
+                  const perSymbolMatch = deltaTs.some(d => Math.abs(d - symbolMs) <= symbolMs * 0.5);
                   cadenceOk = cadenceMatch || perSymbolMatch;
-                  cadenceReason = `full repeat or per-symbol`;
+                  cadenceReason = 'full repeat or per-symbol';
                 }
-                
-                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${cadenceReason}) ${cadenceOk?'✅':'❌'}`);
-                
-                // Layer 6: POLARITY CONSISTENCY (diagnostic only, not blocking)
-                const polarities = window.detectionPolarities.slice(-2);
-                const polarityConsistent = polarities[0] === polarities[1];
-                console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
-                
-            // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
-            const detections = window.detectionHistory.slice(-2);
-            const allTxOn = detections.every(d => d.txWasRunning);
-            const txValidationPass = isOverAirMode ? true : allTxOn;
-            console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
-            
-            // Layer 8: CORRELATION CONSISTENCY (Over-Air Mode only)
-            // Require both detections to have similar correlation (within 0.1)
-            // This rejects random noise spikes that might pass once but not consistently
-            let correlationConsistencyPass = true;
-            if (isOverAirMode) {
-              const lastTwoCorr = detections.slice(-2).map(d => d.correlation);
-              const corrDiff = Math.abs(lastTwoCorr[0] - lastTwoCorr[1]);
-              correlationConsistencyPass = corrDiff <= 0.1; // Within 0.1 correlation units
-              console.log(`  ├─ [correlation consistency] ${lastTwoCorr.map(c => c.toFixed(3)).join(' vs ')} (diff=${corrDiff.toFixed(3)}, ≤0.1) ${correlationConsistencyPass?'✅':'❌'}`);
-            }
-            
-            if (cadenceOk && txValidationPass && correlationConsistencyPass) {
-              // 🎉 UNLOCK!
-              fsmState = 'UNLOCKED';
-              fsmLockoutUntil = now + COOLDOWN_DURATION;
-              presenceVerified = true;
-              
-              const badge = document.getElementById('presenceBadge');
-              badge.textContent = '🔓 UNLOCKED';
-              badge.classList.add('verified');
-              
-              // Log detection quality for analysis
-              console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-              console.log(`  ├─ Detections: 2/2 (interval: ${deltaT.toFixed(0)}ms)`);
-              console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
-              console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
-              console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
-              console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
-              
-              // Warning if mixed polarity (diagnostic only)
-              if (!polarityConsistent) {
-                console.warn(`⚠️ Mixed polarity detected - signal may have interference`);
-              }
-              
-              updateFSMStateDisplay();
-              
-              // Reset to IDLE after cooldown
-              setTimeout(() => {
-                fsmState = 'IDLE';
-                fsmStateStartTime = audioContext.currentTime;
-                presenceVerified = false;
-                window.detectionHistory = [];
-                window.detectionPolarities = [];
-                const badge = document.getElementById('presenceBadge');
-                badge.textContent = '⏳ Listening...';
-                badge.classList.remove('verified');
-                console.log('🔄 Cooldown complete - FSM reset to IDLE');
-                updateFSMStateDisplay();
-              }, COOLDOWN_DURATION * 1000);
-            } else if (!txValidationPass) {
-              // TX was off - reject as false positive (unless Over-Air Mode)
-              console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
-              // Clear oldest detection to allow new pattern
-              codeRepeatTimestamps.shift();
-              window.detectionPolarities.shift();
-            } else {
-                  console.log(`  └─ ❌ Cadence check failed - waiting for next detection`);
+                console.log(`  ├─ [cadence] Δt=[${deltaTs.map(d => d.toFixed(0)).join(', ')}]ms (expected: ${cadenceReason}) ${cadenceOk ? '✅' : '❌'}`);
+
+                // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
+                const detections = window.detectionHistory.slice(-requiredVotes);
+                const allTxOn = detections.every(d => d.txWasRunning);
+                const txValidationPass = isOverAirMode ? true : allTxOn;
+                console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
+
+                // Layer 8: CORRELATION CONSISTENCY (Over-Air Mode only)
+                let correlationConsistencyPass = true;
+                if (isOverAirMode) {
+                  const corrs = detections.map(d => d.correlation);
+                  const maxCorr = Math.max(...corrs);
+                  const minCorr = Math.min(...corrs);
+                  const corrDiff = maxCorr - minCorr;
+                  correlationConsistencyPass = corrDiff <= 0.1; // Within 0.1 correlation units across all votes
+                  console.log(`  ├─ [correlation consistency] ${corrs.map(c => c.toFixed(3)).join(' vs ')} (range=${corrDiff.toFixed(3)}, ≤0.1) ${correlationConsistencyPass ? '✅' : '❌'}`);
+                }
+
+                // FINAL HARD GATE: every vote must individually meet core thresholds
+                const finalCorePass = detections.every(d => (
+                  d.correlation >= CORR_THRESHOLD && d.psr >= PSR_THRESHOLD && d.zScore >= Z_THRESHOLD
+                ));
+                if (!finalCorePass) {
+                  const summary = detections.map(d => `[c=${d.correlation.toFixed(3)}, p=${d.psr.toFixed(1)}dB, z=${d.zScore.toFixed(2)}]`).join(', ');
+                  console.log(`  ├─ [final core check] ${summary} requires corr≥${CORR_THRESHOLD}, PSR≥${PSR_THRESHOLD}dB, Z≥${Z_THRESHOLD} ❌`);
+                } else {
+                  console.log(`  ├─ [final core check] ✅ all detections meet thresholds`);
+                }
+
+                if (cadenceOk && txValidationPass && correlationConsistencyPass && finalCorePass) {
+                  // 🎉 UNLOCK!
+                  fsmState = 'UNLOCKED';
+                  fsmLockoutUntil = now + COOLDOWN_DURATION;
+                  presenceVerified = true;
+
+                  const badge = document.getElementById('presenceBadge');
+                  badge.textContent = '🔓 UNLOCKED';
+                  badge.classList.add('verified');
+
+                  // Log detection quality for analysis
+                  console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
+                  console.log(`  ├─ Detections: ${requiredVotes}/${requiredVotes} (intervals: ${deltaTs.map(d => d.toFixed(0)).join('ms, ')}ms)`);
+                  console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
+                  console.log(`  ├─ Polarity: ${(window.detectionPolarities.slice(-requiredVotes).every((p, _, a) => p === a[0])) ? '✅ consistent' : '⚠️ mixed'}`);
+                  console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
+                  console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
+
+                  updateFSMStateDisplay();
+
+                  // Reset to IDLE after cooldown
+                  setTimeout(() => {
+                    fsmState = 'IDLE';
+                    fsmStateStartTime = audioContext.currentTime;
+                    presenceVerified = false;
+                    window.detectionHistory = [];
+                    window.detectionPolarities = [];
+                    const badge = document.getElementById('presenceBadge');
+                    badge.textContent = '⏳ Listening...';
+                    badge.classList.remove('verified');
+                    console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                    updateFSMStateDisplay();
+                  }, COOLDOWN_DURATION * 1000);
+                } else if (!txValidationPass) {
+                  // TX was off - reject as false positive (unless Over-Air Mode)
+                  console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
+                  // Clear oldest detection to allow new pattern
+                  codeRepeatTimestamps.shift();
+                  window.detectionPolarities.shift();
+                } else {
+                  console.log(`  └─ ❌ Validation failed (cadence | consistency | core). Waiting for next detection`);
                   // Clear oldest detection to allow new pattern
                   codeRepeatTimestamps.shift();
                   window.detectionPolarities.shift();
