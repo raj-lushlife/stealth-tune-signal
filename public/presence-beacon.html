@@ -3209,6 +3209,20 @@
 
     // ==================== INIT ====================
     
+    // Initialize RX settings to match TX settings on page load
+    function initializeRxFromTx() {
+      const txCenterFreq = document.getElementById('spectralCenterFreq').value;
+      const txBinSpacing = document.getElementById('spectralBinSpacing').value;
+      const txSymbolDuration = document.getElementById('spectralSymbolDuration').value;
+      
+      document.getElementById('rxSpectralCenterFreq').value = txCenterFreq;
+      document.getElementById('rxSpectralBinSpacing').value = txBinSpacing;
+      document.getElementById('rxSpectralSymbolDuration').value = txSymbolDuration;
+    }
+    
+    // Auto-sync RX to TX on page load
+    initializeRxFromTx();
+    
     console.log('Presence Beacon loaded. Click "Start Audio" to begin.');
   </script>
 </body>
