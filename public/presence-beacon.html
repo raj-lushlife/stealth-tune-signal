@@ -1972,6 +1972,21 @@
           const sidelobeMean = sidelobes.length > 0 ? sidelobes.reduce((a,b) => a+b, 0) / sidelobes.length : 0;
           const peakToSidelobeRatio = correlation > 0 && sidelobeMean > 0 ? 
             20 * Math.log10(correlation / Math.max(sidelobeMean, 0.001)) : 0;
+
+          // Peak sharpness: difference between best correlation and next best
+          const otherMax = sidelobes.length > 0 ? Math.max(...sidelobes) : 0;
+          const peakSharpness = Math.max(0, correlation - otherMax);
+
+          // Sign-match ratio between observed segment and expected PN31 signs (after polarity)
+          const bestStart = spectralSymbolBuffer.length - codeLen - best.phase;
+          let signMatch = 0;
+          if (bestStart >= 0) {
+            const bestSeg = spectralSymbolBuffer.slice(bestStart, bestStart + codeLen);
+            const expectedSigns = PN31_CODE.map(v => (best.sign * v) > 0 ? 1 : -1);
+            const observedSigns = bestSeg.map(v => v >= 0 ? 1 : -1);
+            const matches = observedSigns.reduce((acc, v, i) => acc + (v === expectedSigns[i] ? 1 : 0), 0);
+            signMatch = matches / codeLen;
+          }
           
           // NORMAL DETECTION (after calibration)
           // Compute Z-score using baseline stats
@@ -2152,6 +2167,8 @@
                 zScore: zScore,
                 medianDelta: medianDelta,
                 phase: best.phase,
+                sharpness: peakSharpness,
+                signMatch: signMatch,
                 txWasRunning: txRunning
               };
               
@@ -2218,9 +2235,9 @@
                 }
 
                 // FINAL HARD GATE: stricter thresholds in Over-Air Mode
-                const FINAL_CORR = isOverAirMode ? Math.max(CORR_THRESHOLD, 0.26) : CORR_THRESHOLD;
-                const FINAL_PSR = isOverAirMode ? Math.max(PSR_THRESHOLD, 8.0) : PSR_THRESHOLD;
-                const FINAL_Z = isOverAirMode ? Math.max(Z_THRESHOLD, 3.0) : Z_THRESHOLD;
+                const FINAL_CORR = isOverAirMode ? Math.max(CORR_THRESHOLD, 0.30) : CORR_THRESHOLD;
+                const FINAL_PSR = isOverAirMode ? Math.max(PSR_THRESHOLD, 9.0) : PSR_THRESHOLD;
+                const FINAL_Z = isOverAirMode ? Math.max(Z_THRESHOLD, 3.5) : Z_THRESHOLD;
                 const finalCorePass = detections.every(d => (
                   d.correlation >= FINAL_CORR && d.psr >= FINAL_PSR && d.zScore >= FINAL_Z
                 ));
@@ -2231,7 +2248,19 @@
                   console.log(`  ├─ [final core check] ✅ all detections meet thresholds`);
                 }
 
-                if (cadenceOk && txValidationPass && correlationConsistencyPass && phaseConsistencyPass && finalCorePass) {
+                // Layer 10: Sharpness and sign-match checks (Over-Air Mode only)
+                let sharpnessPass = true, signMatchPass = true;
+                if (isOverAirMode) {
+                  const minSharp = 0.06, minSign = 0.7;
+                  const sharps = detections.map(d => d.sharpness ?? 0);
+                  const signs = detections.map(d => d.signMatch ?? 0);
+                  sharpnessPass = sharps.every(s => s >= minSharp);
+                  signMatchPass = signs.every(s => s >= minSign);
+                  console.log(`  ├─ [sharpness] values=[${sharps.map(s => s.toFixed?.(3) ?? '0.000').join(', ')}], min=${Math.min(...sharps).toFixed(3)} (≥${minSharp}) ${sharpnessPass ? '✅' : '❌'}`);
+                  console.log(`  ├─ [sign-match] values=[${signs.map(s => s.toFixed?.(2) ?? '0.00').join(', ')}], min=${Math.min(...signs).toFixed(2)} (≥${minSign}) ${signMatchPass ? '✅' : '❌'}`);
+                }
+
+                if (cadenceOk && txValidationPass && correlationConsistencyPass && phaseConsistencyPass && finalCorePass && sharpnessPass && signMatchPass) {
                   // 🎉 UNLOCK!
                   fsmState = 'UNLOCKED';
                   fsmLockoutUntil = now + COOLDOWN_DURATION;
@@ -2271,7 +2300,7 @@
                   codeRepeatTimestamps.shift();
                   window.detectionPolarities.shift();
                 } else {
-                  console.log(`  └─ ❌ Validation failed (cadence | consistency | core). Waiting for next detection`);
+                  console.log(`  └─ ❌ Validation failed (cadence | consistency | core | sharpness | sign). Waiting for next detection`);
                   // Clear oldest detection to allow new pattern
                   codeRepeatTimestamps.shift();
                   window.detectionPolarities.shift();
