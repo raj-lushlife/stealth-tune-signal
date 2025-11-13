@@ -653,34 +653,6 @@
           <div class="warning-banner show" style="background: #2196F3; color: white; display: block;">
             ⚠️ Start RX FIRST (before TX) to calibrate noise baseline!
           </div>
-
-          <!-- RX Configuration Section -->
-          <div class="subsection" style="background: rgba(33, 150, 243, 0.1); border-left: 3px solid #2196F3; padding: 15px; margin-bottom: 20px;">
-            <h3>📡 RX Configuration (Must Match TX Settings)</h3>
-            <div class="grid-2col">
-              <div class="control-group">
-                <label>RX Center Frequency (Hz):</label>
-                <input type="number" id="rxSpectralCenterFreq" value="12000" min="8000" max="18000" step="100">
-              </div>
-              <div class="control-group">
-                <label>RX Bin Spacing (Hz):</label>
-                <input type="number" id="rxSpectralBinSpacing" value="50" min="30" max="100" step="10">
-              </div>
-              <div class="control-group">
-                <label>RX Symbol Duration (ms):</label>
-                <input type="number" id="rxSpectralSymbolDuration" value="60" min="40" max="120" step="5">
-              </div>
-              <div class="control-group">
-                <button id="copyTxToRxBtn" class="btn btn-secondary" style="margin-top: 20px;">
-                  📋 Copy TX Settings → RX
-                </button>
-              </div>
-            </div>
-            <div class="readout" style="margin-top: 10px; font-size: 11px; color: #2196F3;">
-              💡 <strong>CRITICAL:</strong> RX settings must EXACTLY match TX settings for detection to work. Use "Copy TX Settings" button to sync automatically.
-            </div>
-          </div>
-
           <div class="subsection">
             <h3>Correlation Detection</h3>
             <div class="band-display">
@@ -876,15 +848,6 @@
     let txRunning = false;
     let rxRunning = false;
     let currentMode = 'spectral'; // 'spectral' or 'legacy'
-    
-    // TX Configuration (logged when TX starts for verification)
-    let txConfig = {
-      centerFreq: 12000,
-      binSpacing: 50,
-      symbolDuration: 60,
-      freqA: 0,
-      freqB: 0
-    };
 
     // TX State
     let bedBuffer = null;
@@ -1192,26 +1155,9 @@
       const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
       const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
       const symbolGain = parseFloat(document.getElementById('spectralGain').value); // Use UI slider
-      const symbolDuration = parseFloat(document.getElementById('spectralSymbolDuration').value);
       
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
-      
-      // Store TX config for verification
-      txConfig = {
-        centerFreq,
-        binSpacing,
-        symbolDuration,
-        freqA,
-        freqB
-      };
-      
-      console.log('🎯 TX CONFIGURATION:');
-      console.log(`  ├─ Center Frequency: ${centerFreq}Hz`);
-      console.log(`  ├─ Bin Spacing: ${binSpacing}Hz`);
-      console.log(`  ├─ Symbol Duration: ${symbolDuration}ms`);
-      console.log(`  ├─ Freq A (Bin -): ${freqA.toFixed(0)}Hz`);
-      console.log(`  └─ Freq B (Bin +): ${freqB.toFixed(0)}Hz`);
       
       // Create two narrow peaking filters for bins A and B
       // Q=50 gives ~240Hz bandwidth at 12kHz - optimal balance
@@ -1782,38 +1728,12 @@
         console.log(`  └─ Audio input ${mean > -80 ? '✅ ACTIVE' : '❌ TOO QUIET - CHECK MIC'}`);
       }
       
-      // Get RX parameters (from dedicated RX controls)
-      const rxCenterFreq = parseFloat(document.getElementById('rxSpectralCenterFreq').value);
-      const rxBinSpacing = parseFloat(document.getElementById('rxSpectralBinSpacing').value);
-      const rxSymbolDuration = parseFloat(document.getElementById('rxSpectralSymbolDuration').value);
+      // Get parameters
+      const centerFreq = parseFloat(document.getElementById('spectralCenterFreq').value);
+      const binSpacing = parseFloat(document.getElementById('spectralBinSpacing').value);
       
-      const freqA = rxCenterFreq - rxBinSpacing / 2;
-      const freqB = rxCenterFreq + rxBinSpacing / 2;
-      
-      // Log RX config periodically for verification
-      if (frameNum === 1) {
-        console.log('🎤 RX CONFIGURATION:');
-        console.log(`  ├─ RX Center Frequency: ${rxCenterFreq}Hz`);
-        console.log(`  ├─ RX Bin Spacing: ${rxBinSpacing}Hz`);
-        console.log(`  ├─ RX Symbol Duration: ${rxSymbolDuration}ms`);
-        console.log(`  ├─ RX Freq A (Bin -): ${freqA.toFixed(0)}Hz`);
-        console.log(`  └─ RX Freq B (Bin +): ${freqB.toFixed(0)}Hz`);
-        
-        // Verify TX/RX alignment if TX is running
-        if (txRunning && txConfig.centerFreq > 0) {
-          console.log('🔍 TX/RX ALIGNMENT CHECK:');
-          const centerMatch = Math.abs(rxCenterFreq - txConfig.centerFreq) < 1;
-          const spacingMatch = Math.abs(rxBinSpacing - txConfig.binSpacing) < 1;
-          const durationMatch = Math.abs(rxSymbolDuration - txConfig.symbolDuration) < 1;
-          console.log(`  ├─ Center Freq: ${centerMatch ? '✅' : '❌'} (TX: ${txConfig.centerFreq}Hz, RX: ${rxCenterFreq}Hz)`);
-          console.log(`  ├─ Bin Spacing: ${spacingMatch ? '✅' : '❌'} (TX: ${txConfig.binSpacing}Hz, RX: ${rxBinSpacing}Hz)`);
-          console.log(`  └─ Symbol Duration: ${durationMatch ? '✅' : '❌'} (TX: ${txConfig.symbolDuration}ms, RX: ${rxSymbolDuration}ms)`);
-          
-          if (!centerMatch || !spacingMatch || !durationMatch) {
-            console.error('⚠️ TX/RX MISMATCH DETECTED! Use "Copy TX Settings → RX" button to sync.');
-          }
-        }
-      }
+      const freqA = centerFreq - binSpacing / 2;
+      const freqB = centerFreq + binSpacing / 2;
       
       // DIAGNOSTIC: Calculate FFT bin indices
       const binIndexA = Math.round(freqA / binHz);
@@ -2034,20 +1954,6 @@
           }
           const correlation = best.corr;
           
-          // Compute sign-pattern agreement for best phase and polarity
-          let signMatchRatio = 0;
-          try {
-            const bestStart = spectralSymbolBuffer.length - codeLen - best.phase;
-            const bestSeg = spectralSymbolBuffer.slice(bestStart, bestStart + codeLen);
-            let matches = 0;
-            for (let i = 0; i < codeLen; i++) {
-              const expected = best.sign * PN31_CODE[i];
-              const observedSign = bestSeg[i] >= 0 ? 1 : -1;
-              if ((expected >= 0 ? 1 : -1) === observedSign) matches++;
-            }
-            signMatchRatio = matches / codeLen;
-          } catch (e) { signMatchRatio = 0; }
-          
           // Compute Peak-to-Sidelobe Ratio (PSR)
           // Sidelobe = mean of all non-peak correlations
           const sidelobes = allCorrelations.filter((c, i) => i !== best.phase);
@@ -2099,11 +2005,11 @@
             return;
           }
           
-          // FSM thresholds - PERMISSIVE for Over-Air Mode, rely on PATTERN CONSISTENCY instead
+          // FSM thresholds - adjust for Over-Air Mode (cross-device detection)
           const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-          const CORR_THRESHOLD = isOverAirMode ? 0.20 : 0.30; // Permissive - pattern validation filters noise
-          const PSR_THRESHOLD = isOverAirMode ? 6.0 : 6.0; // Permissive baseline
-          const Z_THRESHOLD = isOverAirMode ? 2.5 : 3.0; // Permissive - pattern validation filters noise
+          const CORR_THRESHOLD = isOverAirMode ? 0.20 : 0.30; // Lower for over-air
+          const PSR_THRESHOLD = isOverAirMode ? 6.0 : 6.0; // CRITICAL: Higher PSR rejects unencoded audio
+          const Z_THRESHOLD = isOverAirMode ? 2.5 : 3.0; // Slightly higher for over-air
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
@@ -2199,8 +2105,7 @@
               console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
               console.log(`  ├─ [median|Δ|] ${medianDelta.toFixed(2)}dB (≥${MEDIAN_DELTA_THRESHOLD}) ${medianDeltaPass?'✅':'❌'}`);
               console.log(`  ├─ [energy] dev=${energyDeviation.toFixed(1)}dB (≤${ENERGY_BALANCE_THRESHOLD}) ${energyBalancePass?'✅':'❌'}`);
-              console.log(`  ├─ [guards] Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB (≤${GUARD_THRESHOLD}) ${guardsPass?'✅':'❌'}`);
-              console.log(`  └─ [sign-pattern] ${(signMatchRatio*100).toFixed(0)}% (≥75%) ${signMatchRatio>=0.75?'✅':'❌'}`);
+              console.log(`  └─ [guards] Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB (≤${GUARD_THRESHOLD}) ${guardsPass?'✅':'❌'}`);
             }
             
             // PROGRESSIVE VALIDATION (get unlock working, then tighten)
@@ -2223,104 +2128,6 @@
             
             // Layer 4: MEDIAN DELTA VALIDATION - Relaxed threshold
             const medianDeltaValidation = medianDelta >= MEDIAN_DELTA_THRESHOLD; // Back to normal
-            
-            // Layer 4.5: PATTERN CONSISTENCY TRACKING (Over-Air Mode only)
-            // Track correlation stability across consecutive candidate frames
-            if (!window.candidateCorrelationBuffer) window.candidateCorrelationBuffer = [];
-            
-            if (isOverAirMode && corePass) {
-              // Store candidate correlation with timestamp
-              window.candidateCorrelationBuffer.push({
-                time: now,
-                correlation: correlation,
-                psr: peakToSidelobeRatio,
-                zScore: zScore
-              });
-              
-              // Keep only last 10 seconds of candidates
-              window.candidateCorrelationBuffer = window.candidateCorrelationBuffer.filter(c => now - c.time < 10);
-              
-              // Require 3+ consecutive candidates within 300ms with stable correlation (±0.03)
-              const recentCandidates = window.candidateCorrelationBuffer.filter(c => now - c.time < 0.3);
-              let patternConsistent = false;
-              let corrVariance = Infinity;
-              
-              if (recentCandidates.length >= 3) {
-                const correlations = recentCandidates.map(c => c.correlation);
-                const maxCorr = Math.max(...correlations);
-                const minCorr = Math.min(...correlations);
-                corrVariance = maxCorr - minCorr;
-                patternConsistent = corrVariance <= 0.03; // ±0.03 stability
-                
-                if (frameCount % 20 === 0) {
-                  console.log(`🔬 PATTERN CONSISTENCY: ${recentCandidates.length} candidates in 300ms, corr variance=${corrVariance.toFixed(3)} (≤0.03) ${patternConsistent?'✅':'❌'}`);
-                }
-              }
-              
-              // Require pattern to be present before accepting a detection
-              if (recentCandidates.length < 3) {
-                console.log(`  └─ ⏳ PATTERN BUILDING: ${recentCandidates.length}/3 candidates collected (300ms window)`);
-                return; // Not enough stability evidence yet
-              }
-              if (!patternConsistent) {
-                // Pattern inconsistent - reject this candidate
-                console.log(`  └─ ❌ PATTERN INCONSISTENT: correlation variance ${corrVariance.toFixed(3)} > 0.03 (likely noise)`);
-                return; // Skip this candidate
-              }
-              // else: pattern consistent with ≥3 candidates → proceed
-
-              // Layer 4.6: SIGN PATTERN AGREEMENT (Over-Air Mode)
-              // Require ≥75% chip sign agreement with PN sequence at best phase/polarity
-              const signPct = Math.round(signMatchRatio * 100);
-              if (signMatchRatio < 0.75) {
-                console.log(`  └─ ❌ SIGN PATTERN MISMATCH: ${signPct}% < 75% (likely unencoded)`);
-                return; // Reject candidate as false positive
-              }
-              
-              // Layer 4.7: STRICT FREQUENCY-HOPPING VERIFICATION
-              // Verify that the actual bin A/B power pattern matches the PN31 code
-              // This is the KEY to rejecting unencoded audio
-              try {
-                const binAHistory = [];
-                const binBHistory = [];
-                
-                // Get recent FFT history to check frequency-hopping pattern
-                // We need to check if powerA > powerB when PN code is +1, and vice versa
-                const recentFrames = Math.min(codeLen, spectralSymbolBuffer.length);
-                
-                // For strict verification: check that the frequency pattern in the last
-                // codeLen symbols matches the PN31 code
-                let frequencyPatternMatches = 0;
-                const bestStart = spectralSymbolBuffer.length - codeLen - best.phase;
-                
-                // We check: does the sign of (powerA - powerB) match the PN code?
-                // If PN code is +1, we expect powerB > powerA (positive delta)
-                // If PN code is -1, we expect powerA > powerB (negative delta)
-                const patternSeg = spectralSymbolBuffer.slice(bestStart, bestStart + codeLen);
-                
-                for (let i = 0; i < codeLen; i++) {
-                  const expectedSign = best.sign * PN31_CODE[i];
-                  const observedSign = patternSeg[i] >= 0 ? 1 : -1;
-                  if (expectedSign * observedSign > 0) {
-                    frequencyPatternMatches++;
-                  }
-                }
-                
-                const frequencyMatchRatio = frequencyPatternMatches / codeLen;
-                const freqPct = Math.round(frequencyMatchRatio * 100);
-                
-                // Require 80% frequency pattern match for Over-Air Mode
-                if (frequencyMatchRatio < 0.80) {
-                  console.log(`  └─ ❌ FREQUENCY HOPPING MISMATCH: ${freqPct}% < 80% (unencoded audio has random frequency content)`);
-                  return; // Reject - unencoded audio won't have the correct frequency pattern
-                } else {
-                  if (frameCount % 30 === 0) console.log(`  └─ ✅ FREQUENCY HOPPING VERIFIED: ${freqPct}% ≥ 80%`);
-                }
-              } catch (e) {
-                console.log(`  └─ ❌ FREQUENCY HOPPING VERIFICATION ERROR: ${e.message}`);
-                return;
-              }
-            }
             
             if (corePass && medianDeltaValidation) {
               // Store detection with metadata
@@ -2359,9 +2166,9 @@
                 let cadenceReason = '';
                 
                 if (isOverAirMode) {
-                  // In Over-Air Mode: ONLY accept 60ms ±10ms (PRECISE per-symbol cadence for pattern validation)
-                  cadenceOk = Math.abs(deltaT - symbolMs) <= 10; // ±10ms tolerance (very tight)
-                  cadenceReason = `per-symbol (60ms ±10ms)`;
+                  // In Over-Air Mode: ONLY accept 60ms ±20ms (per-symbol cadence)
+                  cadenceOk = Math.abs(deltaT - symbolMs) <= 20; // ±20ms tolerance
+                  cadenceReason = `per-symbol (60ms ±20ms)`;
                 } else {
                   // Normal mode: accept either full repeat or per-symbol
                   const tolerance = 0.5;
@@ -2384,15 +2191,15 @@
             const txValidationPass = isOverAirMode ? true : allTxOn;
             console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
             
-            // Layer 8: DETECTION CORRELATION CONSISTENCY (Over-Air Mode only)
-            // Require both DETECTIONS to have similar correlation (within 0.03)
-            // This is separate from the candidate pattern consistency above
+            // Layer 8: CORRELATION CONSISTENCY (Over-Air Mode only)
+            // Require both detections to have similar correlation (within 0.1)
+            // This rejects random noise spikes that might pass once but not consistently
             let correlationConsistencyPass = true;
             if (isOverAirMode) {
               const lastTwoCorr = detections.slice(-2).map(d => d.correlation);
               const corrDiff = Math.abs(lastTwoCorr[0] - lastTwoCorr[1]);
-              correlationConsistencyPass = corrDiff <= 0.03; // Within 0.03 correlation units (tight)
-              console.log(`  ├─ [detection correlation consistency] ${lastTwoCorr.map(c => c.toFixed(3)).join(' vs ')} (diff=${corrDiff.toFixed(3)}, ≤0.03) ${correlationConsistencyPass?'✅':'❌'}`);
+              correlationConsistencyPass = corrDiff <= 0.1; // Within 0.1 correlation units
+              console.log(`  ├─ [correlation consistency] ${lastTwoCorr.map(c => c.toFixed(3)).join(' vs ')} (diff=${corrDiff.toFixed(3)}, ≤0.1) ${correlationConsistencyPass?'✅':'❌'}`);
             }
             
             if (cadenceOk && txValidationPass && correlationConsistencyPass) {
@@ -3166,22 +2973,6 @@
     // RX
     document.getElementById('startRxBtn').addEventListener('click', startRX);
     document.getElementById('stopRxBtn').addEventListener('click', stopRX);
-    
-    // Copy TX to RX button
-    document.getElementById('copyTxToRxBtn').addEventListener('click', () => {
-      const txCenterFreq = document.getElementById('spectralCenterFreq').value;
-      const txBinSpacing = document.getElementById('spectralBinSpacing').value;
-      const txSymbolDuration = document.getElementById('spectralSymbolDuration').value;
-      
-      document.getElementById('rxSpectralCenterFreq').value = txCenterFreq;
-      document.getElementById('rxSpectralBinSpacing').value = txBinSpacing;
-      document.getElementById('rxSpectralSymbolDuration').value = txSymbolDuration;
-      
-      console.log('✅ TX settings copied to RX:');
-      console.log(`  ├─ Center Frequency: ${txCenterFreq}Hz`);
-      console.log(`  ├─ Bin Spacing: ${txBinSpacing}Hz`);
-      console.log(`  └─ Symbol Duration: ${txSymbolDuration}ms`);
-    });
     document.getElementById('resetRxBtn').addEventListener('click', resetRX);
     document.getElementById('recalibrateBtn').addEventListener('click', () => {
       if (rxRunning && currentMode === 'spectral') {
@@ -3208,20 +2999,6 @@
     });
 
     // ==================== INIT ====================
-    
-    // Initialize RX settings to match TX settings on page load
-    function initializeRxFromTx() {
-      const txCenterFreq = document.getElementById('spectralCenterFreq').value;
-      const txBinSpacing = document.getElementById('spectralBinSpacing').value;
-      const txSymbolDuration = document.getElementById('spectralSymbolDuration').value;
-      
-      document.getElementById('rxSpectralCenterFreq').value = txCenterFreq;
-      document.getElementById('rxSpectralBinSpacing').value = txBinSpacing;
-      document.getElementById('rxSpectralSymbolDuration').value = txSymbolDuration;
-    }
-    
-    // Auto-sync RX to TX on page load
-    initializeRxFromTx();
     
     console.log('Presence Beacon loaded. Click "Start Audio" to begin.');
   </script>
