@@ -2005,11 +2005,11 @@
             return;
           }
           
-          // FSM thresholds - STRICTER for Over-Air Mode to prevent false positives
+          // FSM thresholds - PERMISSIVE for Over-Air Mode, rely on PATTERN CONSISTENCY instead
           const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-          const CORR_THRESHOLD = isOverAirMode ? 0.25 : 0.30; // HIGHER for over-air (must clearly match PN31)
-          const PSR_THRESHOLD = isOverAirMode ? 8.0 : 6.0; // HIGHER PSR rejects unencoded audio noise
-          const Z_THRESHOLD = isOverAirMode ? 3.5 : 3.0; // HIGHER Z-score for over-air
+          const CORR_THRESHOLD = isOverAirMode ? 0.20 : 0.30; // Permissive - pattern validation filters noise
+          const PSR_THRESHOLD = isOverAirMode ? 6.0 : 6.0; // Permissive baseline
+          const Z_THRESHOLD = isOverAirMode ? 2.5 : 3.0; // Permissive - pattern validation filters noise
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
@@ -2129,6 +2129,48 @@
             // Layer 4: MEDIAN DELTA VALIDATION - Relaxed threshold
             const medianDeltaValidation = medianDelta >= MEDIAN_DELTA_THRESHOLD; // Back to normal
             
+            // Layer 4.5: PATTERN CONSISTENCY TRACKING (Over-Air Mode only)
+            // Track correlation stability across consecutive candidate frames
+            if (!window.candidateCorrelationBuffer) window.candidateCorrelationBuffer = [];
+            
+            if (isOverAirMode && corePass) {
+              // Store candidate correlation with timestamp
+              window.candidateCorrelationBuffer.push({
+                time: now,
+                correlation: correlation,
+                psr: peakToSidelobeRatio,
+                zScore: zScore
+              });
+              
+              // Keep only last 10 seconds of candidates
+              window.candidateCorrelationBuffer = window.candidateCorrelationBuffer.filter(c => now - c.time < 10);
+              
+              // Require 3+ consecutive candidates within 300ms with stable correlation (±0.03)
+              const recentCandidates = window.candidateCorrelationBuffer.filter(c => now - c.time < 0.3);
+              let patternConsistent = false;
+              
+              if (recentCandidates.length >= 3) {
+                const correlations = recentCandidates.map(c => c.correlation);
+                const maxCorr = Math.max(...correlations);
+                const minCorr = Math.min(...correlations);
+                const corrVariance = maxCorr - minCorr;
+                patternConsistent = corrVariance <= 0.03; // ±0.03 stability
+                
+                if (frameCount % 20 === 0) {
+                  console.log(`🔬 PATTERN CONSISTENCY: ${recentCandidates.length} candidates in 300ms, corr variance=${corrVariance.toFixed(3)} (≤0.03) ${patternConsistent?'✅':'❌'}`);
+                }
+              }
+              
+              // Only proceed if pattern is consistent (or not enough candidates yet)
+              if (recentCandidates.length < 3 || patternConsistent) {
+                // Pattern is consistent or still building - proceed
+              } else {
+                // Pattern inconsistent - reject this candidate
+                console.log(`  └─ ❌ PATTERN INCONSISTENT: correlation variance ${(maxCorr - minCorr).toFixed(3)} > 0.03 (likely noise)`);
+                return; // Skip this candidate
+              }
+            }
+            
             if (corePass && medianDeltaValidation) {
               // Store detection with metadata
               const detection = {
@@ -2166,9 +2208,9 @@
                 let cadenceReason = '';
                 
                 if (isOverAirMode) {
-                  // In Over-Air Mode: ONLY accept 60ms ±15ms (VERY precise per-symbol cadence)
-                  cadenceOk = Math.abs(deltaT - symbolMs) <= 15; // ±15ms tolerance (tighter)
-                  cadenceReason = `per-symbol (60ms ±15ms)`;
+                  // In Over-Air Mode: ONLY accept 60ms ±10ms (PRECISE per-symbol cadence for pattern validation)
+                  cadenceOk = Math.abs(deltaT - symbolMs) <= 10; // ±10ms tolerance (very tight)
+                  cadenceReason = `per-symbol (60ms ±10ms)`;
                 } else {
                   // Normal mode: accept either full repeat or per-symbol
                   const tolerance = 0.5;
@@ -2191,15 +2233,15 @@
             const txValidationPass = isOverAirMode ? true : allTxOn;
             console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
             
-            // Layer 8: CORRELATION CONSISTENCY (Over-Air Mode only)
-            // Require both detections to have similar correlation (within 0.05 - very tight)
-            // This rejects random noise spikes that might pass once but not consistently
+            // Layer 8: DETECTION CORRELATION CONSISTENCY (Over-Air Mode only)
+            // Require both DETECTIONS to have similar correlation (within 0.03)
+            // This is separate from the candidate pattern consistency above
             let correlationConsistencyPass = true;
             if (isOverAirMode) {
               const lastTwoCorr = detections.slice(-2).map(d => d.correlation);
               const corrDiff = Math.abs(lastTwoCorr[0] - lastTwoCorr[1]);
-              correlationConsistencyPass = corrDiff <= 0.05; // Within 0.05 correlation units (very strict)
-              console.log(`  ├─ [correlation consistency] ${lastTwoCorr.map(c => c.toFixed(3)).join(' vs ')} (diff=${corrDiff.toFixed(3)}, ≤0.05) ${correlationConsistencyPass?'✅':'❌'}`);
+              correlationConsistencyPass = corrDiff <= 0.03; // Within 0.03 correlation units (tight)
+              console.log(`  ├─ [detection correlation consistency] ${lastTwoCorr.map(c => c.toFixed(3)).join(' vs ')} (diff=${corrDiff.toFixed(3)}, ≤0.03) ${correlationConsistencyPass?'✅':'❌'}`);
             }
             
             if (cadenceOk && txValidationPass && correlationConsistencyPass) {
