@@ -637,6 +637,7 @@
 
         <div class="readout" id="txReadout">
           <div><strong>Status:</strong> <span id="txStatus">Idle</span></div>
+          <div><strong>TX CRC:</strong> <span id="txCRC" style="font-family: monospace; color: #4CAF50;">—</span></div>
           <div><strong>Next Drop In:</strong> <span id="nextDropCountdown">—</span></div>
           <div><strong>Last Scheduled:</strong> <span id="lastScheduled">—</span></div>
           <div><strong>Last Masking RMS:</strong> <span id="lastMaskingRms">—</span></div>
@@ -655,6 +656,12 @@
           </div>
           <div class="subsection">
             <h3>Correlation Detection</h3>
+            <div class="control-group">
+              <div class="checkbox-wrapper">
+                <input type="checkbox" id="requireCRC" checked>
+                <label for="requireCRC">🔐 Require CRC Validation (ironclad - rejects unencoded audio)</label>
+              </div>
+            </div>
             <div class="band-display">
               <div class="band-meter">
                 <div class="label">Correlation Peak</div>
@@ -1392,6 +1399,10 @@
             const crcValue = generateCRCPayload();
             const crcSymbols = encodeCRCAsSymbols(crcValue);
             console.log(`🔐 TX: Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} (8 symbols)`);
+            
+            // Update TX HUD
+            const txCRCEl = document.getElementById('txCRC');
+            if (txCRCEl) txCRCEl.textContent = '0x' + crcValue.toString(16).padStart(2,'0').toUpperCase();
             
             let crcIndex = 0;
             function transmitCRCSymbol() {
@@ -2865,15 +2876,16 @@
       filterA.connect(filterB);
       filterB.connect(offlineCtx.destination);
       
-      // Schedule symbols
+      // Schedule symbols (PN31 + CRC for each repeat)
       const fadeTime = 0.004; // 4ms fade to match live
       const jitterMs = 12; // ±12ms jitter
       let symbolsEncoded = 0;
       
       for (let repeat = 0; repeat < repeats; repeat++) {
+        // Encode PN31 code
         for (let i = 0; i < PN31_CODE.length; i++) {
           const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
-          const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS + jitter;
+          const symbolTime = startTime + (repeat * (PN31_CODE.length + 8) + i) * symbolDurationS + jitter;
           
           if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
             const symbol = PN31_CODE[i];
@@ -2898,9 +2910,37 @@
             }
           }
         }
+        
+        // Encode CRC-8 after each PN31 repeat (8 symbols)
+        const crcValue = generateCRCPayload();
+        const crcSymbols = encodeCRCAsSymbols(crcValue);
+        console.log(`  🔐 Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} after repeat ${repeat + 1}`);
+        
+        for (let j = 0; j < 8; j++) {
+          const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
+          const symbolTime = startTime + (repeat * (PN31_CODE.length + 8) + PN31_CODE.length + j) * symbolDurationS + jitter;
+          
+          if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
+            const crcSymbol = crcSymbols[j];
+            const gainA = crcSymbol === 1 ? -symbolGain : symbolGain;
+            const gainB = crcSymbol === 1 ? symbolGain : -symbolGain;
+            
+            filterA.gain.setValueAtTime(0, symbolTime);
+            filterA.gain.linearRampToValueAtTime(gainA, symbolTime + fadeTime);
+            filterA.gain.setValueAtTime(gainA, symbolTime + symbolDurationS - fadeTime);
+            filterA.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
+            
+            filterB.gain.setValueAtTime(0, symbolTime);
+            filterB.gain.linearRampToValueAtTime(gainB, symbolTime + fadeTime);
+            filterB.gain.setValueAtTime(gainB, symbolTime + symbolDurationS - fadeTime);
+            filterB.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
+            
+            symbolsEncoded++;
+          }
+        }
       }
       
-      console.log(`  ✅ Scheduled ${symbolsEncoded} symbols`);
+      console.log(`  ✅ Scheduled ${symbolsEncoded} symbols (including CRC)`);
       
       source.start(0);
       offlineEncodedBuffer = await offlineCtx.startRendering();
