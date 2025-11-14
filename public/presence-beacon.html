@@ -758,22 +758,10 @@
 
         <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
           <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-            <input type="checkbox" id="overAirMode" style="width: 18px; height: 18px; cursor: pointer;">
-            <span style="font-weight: 600;">📡 Over-Air Mode</span>
-            <span style="opacity: 0.7; font-size: 0.9em;">(Bypass TX validation - for cross-device testing only)</span>
+            <input type="checkbox" id="iphoneMode" style="width: 18px; height: 18px; cursor: pointer;">
+            <span style="font-weight: 600;">📱 iPhone Mode</span>
+            <span style="opacity: 0.7; font-size: 0.9em;">(Relaxed thresholds: correlation ≥0.20 for over-air detection)</span>
           </label>
-        </div>
-
-        <div id="validationStatus" style="margin: 16px 0; padding: 16px; background: linear-gradient(135deg, rgba(0,100,200,0.08), rgba(0,150,255,0.12)); border-left: 4px solid #0066cc; border-radius: 8px; font-size: 13px; display: none;">
-          <div style="font-weight: 700; margin-bottom: 10px; color: #0066cc; font-size: 14px;">🛡️ Iron-Clad Validation Active</div>
-          <div id="validationList" style="line-height: 2; color: #1a1a1a;">
-            ✓ Correlation ≥ 0.20 (pattern match)<br>
-            ✓ PSR ≥ 6.0 dB (signal power ratio)<br>
-            ✓ Z-score ≥ 2.5 (statistical significance)<br>
-            ✓ Cadence: 60ms ±20ms (precise timing)<br>
-            ✓ Correlation consistency ±0.1 (stable)<br>
-            ✓ Dynamic polarity correction
-          </div>
         </div>
 
         <div class="button-row">
@@ -1972,28 +1960,6 @@
           const sidelobeMean = sidelobes.length > 0 ? sidelobes.reduce((a,b) => a+b, 0) / sidelobes.length : 0;
           const peakToSidelobeRatio = correlation > 0 && sidelobeMean > 0 ? 
             20 * Math.log10(correlation / Math.max(sidelobeMean, 0.001)) : 0;
-
-          // Peak sharpness: difference between best correlation and next best
-          const otherMax = sidelobes.length > 0 ? Math.max(...sidelobes) : 0;
-          const peakSharpness = Math.max(0, correlation - otherMax);
-
-          // Sign-match ratio and run-length check between observed segment and expected PN31 signs (after polarity)
-          const bestStart = spectralSymbolBuffer.length - codeLen - best.phase;
-          let signMatch = 0;
-          let signMaxRun = 0;
-          if (bestStart >= 0) {
-            const bestSeg = spectralSymbolBuffer.slice(bestStart, bestStart + codeLen);
-            const expectedSigns = PN31_CODE.map(v => (best.sign * v) > 0 ? 1 : -1);
-            const observedSigns = bestSeg.map(v => v >= 0 ? 1 : -1);
-            const matches = observedSigns.reduce((acc, v, i) => acc + (v === expectedSigns[i] ? 1 : 0), 0);
-            signMatch = matches / codeLen;
-            // Compute maximum consecutive identical sign run length (anti-constant-signal check)
-            let currentRun = 1; signMaxRun = 1;
-            for (let i = 1; i < observedSigns.length; i++) {
-              if (observedSigns[i] === observedSigns[i - 1]) { currentRun++; } else { currentRun = 1; }
-              if (currentRun > signMaxRun) signMaxRun = currentRun;
-            }
-          }
           
           // NORMAL DETECTION (after calibration)
           // Compute Z-score using baseline stats
@@ -2039,11 +2005,11 @@
             return;
           }
           
-          // FSM thresholds - adjust for Over-Air Mode (cross-device detection)
-          const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-          const CORR_THRESHOLD = isOverAirMode ? 0.20 : 0.30; // Lower for over-air
-          const PSR_THRESHOLD = isOverAirMode ? 6.0 : 6.0; // CRITICAL: Higher PSR rejects unencoded audio
-          const Z_THRESHOLD = isOverAirMode ? 2.5 : 3.0; // Slightly higher for over-air
+          // FSM thresholds - adjust for iPhone Mode (over-air detection)
+          const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
+          const CORR_THRESHOLD = isIphoneMode ? 0.20 : 0.30; // Lower for iPhone over-air
+          const PSR_THRESHOLD = isIphoneMode ? 4.0 : 6.0; // Lower for iPhone over-air
+          const Z_THRESHOLD = isIphoneMode ? 2.5 : 3.0; // Lower for iPhone over-air
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
@@ -2068,8 +2034,7 @@
               
               console.log(`🎵 FSM: IDLE → CODE_LOCK`);
               console.log(`  ├─ Trigger: corr=${correlation.toFixed(3)} (≥${(CORR_THRESHOLD*0.7).toFixed(3)}), psr=${peakToSidelobeRatio.toFixed(1)}dB (≥${(PSR_THRESHOLD*0.6).toFixed(1)}dB)`);
-              const requiredVotesIdle = isOverAirMode ? 3 : 2;
-              console.log(`  └─ Required for unlock: ${requiredVotesIdle} detections with proper cadence`);
+              console.log(`  └─ Required for unlock: 2 detections with proper cadence`);
               updateFSMStateDisplay();
             }
             
@@ -2173,10 +2138,6 @@
                 psr: peakToSidelobeRatio,
                 zScore: zScore,
                 medianDelta: medianDelta,
-                phase: best.phase,
-                sharpness: peakSharpness,
-                signMatch: signMatch,
-                maxRun: signMaxRun,
                 txWasRunning: txRunning
               };
               
@@ -2189,136 +2150,83 @@
               codeRepeatTimestamps.push(now);
               window.detectionPolarities.push(detectionPolarity);
               
-              const votesRequiredInline = isOverAirMode ? 3 : 2;
-              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${votesRequiredInline} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/2 (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
               
-              // Layer 5: REQUIRE N DETECTIONS with proper cadence (stricter in Over-Air Mode)
-              const requiredVotes = isOverAirMode ? 3 : 2;
-              if (codeRepeatTimestamps.length >= requiredVotes) {
-                const times = codeRepeatTimestamps.slice(-requiredVotes);
-                const deltaTs = times.slice(1).map((t, i) => (times[i + 1] - times[i]) * 1000); // ms between votes
+              // Layer 5: REQUIRE 2 DETECTIONS with proper cadence
+              if (codeRepeatTimestamps.length >= 2) {
+                const lastTwo = codeRepeatTimestamps.slice(-2);
+                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
                 const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
-
-                // STRICT cadence for Over-Air Mode: all deltas must be ~one symbol
-                let cadenceOk = false;
-                let cadenceReason = '';
-                if (isOverAirMode) {
-                  cadenceOk = deltaTs.every(d => Math.abs(d - symbolMs) <= 20); // ±20ms tolerance for each hop
-                  cadenceReason = `per-symbol (${symbolMs.toFixed(0)}ms ±20ms) x${requiredVotes - 1}`;
-                } else {
-                  // Normal mode: accept either full repeat or at least one per-symbol hop
-                  const tolerance = 0.5;
-                  const cadenceMatch = Math.abs(deltaTs[deltaTs.length - 1] - expectedRepeatMs) <= expectedRepeatMs * tolerance;
-                  const perSymbolMatch = deltaTs.some(d => Math.abs(d - symbolMs) <= symbolMs * 0.5);
-                  cadenceOk = cadenceMatch || perSymbolMatch;
-                  cadenceReason = 'full repeat or per-symbol';
-                }
-                console.log(`  ├─ [cadence] Δt=[${deltaTs.map(d => d.toFixed(0)).join(', ')}]ms (expected: ${cadenceReason}) ${cadenceOk ? '✅' : '❌'}`);
-
-                // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
-                const detections = window.detectionHistory.slice(-requiredVotes);
-                const allTxOn = detections.every(d => d.txWasRunning);
-                const txValidationPass = isOverAirMode ? true : allTxOn;
-                console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
-
-                // Layer 8: CORRELATION CONSISTENCY (Over-Air Mode only)
-                let correlationConsistencyPass = true;
-                if (isOverAirMode) {
-                  const corrs = detections.map(d => d.correlation);
-                  const maxCorr = Math.max(...corrs);
-                  const minCorr = Math.min(...corrs);
-                  const corrDiff = maxCorr - minCorr;
-                  correlationConsistencyPass = corrDiff <= 0.1; // Within 0.1 correlation units across all votes
-                  console.log(`  ├─ [correlation consistency] ${corrs.map(c => c.toFixed(3)).join(' vs ')} (range=${corrDiff.toFixed(3)}, ≤0.1) ${correlationConsistencyPass ? '✅' : '❌'}`);
-                }
-
-                // Layer 9: PHASE CONSISTENCY (Over-Air Mode only)
-                let phaseConsistencyPass = true;
-                if (isOverAirMode) {
-                  const phases = detections.map(d => d.phase ?? -1);
-                  const allEqual = phases.every(p => p === phases[0]);
-                  phaseConsistencyPass = allEqual;
-                  console.log(`  ├─ [phase consistency] phases=[${phases.join(', ')}] ${phaseConsistencyPass ? '✅' : '❌'}`);
-                }
-
-                // FINAL HARD GATE: stricter thresholds in Over-Air Mode
-                const FINAL_CORR = isOverAirMode ? Math.max(CORR_THRESHOLD, 0.35) : CORR_THRESHOLD;
-                const FINAL_PSR = isOverAirMode ? Math.max(PSR_THRESHOLD, 10.0) : PSR_THRESHOLD;
-                const FINAL_Z = isOverAirMode ? Math.max(Z_THRESHOLD, 4.0) : Z_THRESHOLD;
-                const finalCorePass = detections.every(d => (
-                  d.correlation >= FINAL_CORR && d.psr >= FINAL_PSR && d.zScore >= FINAL_Z
-                ));
-                if (!finalCorePass) {
-                  const summary = detections.map(d => `[c=${d.correlation.toFixed(3)}, p=${d.psr.toFixed(1)}dB, z=${d.zScore.toFixed(2)}]`).join(', ');
-                  console.log(`  ├─ [final core check] ${summary} requires corr≥${FINAL_CORR}, PSR≥${FINAL_PSR}dB, Z≥${FINAL_Z} ❌`);
-                } else {
-                  console.log(`  ├─ [final core check] ✅ all detections meet thresholds`);
-                }
-
-                // Layer 10: Sharpness and sign-match checks (Over-Air Mode only)
-                let sharpnessPass = true, signMatchPass = true;
-                if (isOverAirMode) {
-                  const minSharp = 0.10, minSign = 0.90;
-                  const sharps = detections.map(d => d.sharpness ?? 0);
-                  const signs = detections.map(d => d.signMatch ?? 0);
-                  sharpnessPass = sharps.every(s => s >= minSharp);
-                  signMatchPass = signs.every(s => s >= minSign);
-                  console.log(`  ├─ [sharpness] values=[${sharps.map(s => s.toFixed?.(3) ?? '0.000').join(', ')}], min=${Math.min(...sharps).toFixed(3)} (≥${minSharp}) ${sharpnessPass ? '✅' : '❌'}`);
-                  console.log(`  ├─ [sign-match] values=[${signs.map(s => s.toFixed?.(2) ?? '0.00').join(', ')}], min=${Math.min(...signs).toFixed(2)} (≥${minSign}) ${signMatchPass ? '✅' : '❌'}`);
-                }
-
-                // Layer 11: Run-length anti-constant and strong-detection requirement (Over-Air Mode only)
-                let runLengthPass = true, strongDetectionPass = true;
-                if (isOverAirMode) {
-                  const maxRuns = detections.map(d => d.maxRun ?? 999);
-                  runLengthPass = maxRuns.every(r => r <= 6);
-                  strongDetectionPass = detections.some(d => d.correlation >= 0.40 && d.psr >= 12.0 && d.zScore >= 5.0);
-                  console.log(`  ├─ [runs] max=[${maxRuns.join(', ')}], limit=6 ${runLengthPass ? '✅' : '❌'}`);
-                  console.log(`  ├─ [strong-detect] require any(corr≥0.40, PSR≥12dB, Z≥5.0): ${strongDetectionPass ? '✅' : '❌'}`);
-                }
-
-                if (cadenceOk && txValidationPass && correlationConsistencyPass && phaseConsistencyPass && finalCorePass && sharpnessPass && signMatchPass && runLengthPass && strongDetectionPass) {
-                  // 🎉 UNLOCK!
-                  fsmState = 'UNLOCKED';
-                  fsmLockoutUntil = now + COOLDOWN_DURATION;
-                  presenceVerified = true;
-
-                  const badge = document.getElementById('presenceBadge');
-                  badge.textContent = '🔓 UNLOCKED';
-                  badge.classList.add('verified');
-
-                  // Log detection quality for analysis
-                  console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-                  console.log(`  ├─ Detections: ${requiredVotes}/${requiredVotes} (intervals: ${deltaTs.map(d => d.toFixed(0)).join('ms, ')}ms)`);
-                  console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
-                  console.log(`  ├─ Polarity: ${(window.detectionPolarities.slice(-requiredVotes).every((p, _, a) => p === a[0])) ? '✅ consistent' : '⚠️ mixed'}`);
-                  console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
-                  console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
-
-                  updateFSMStateDisplay();
-
-                  // Reset to IDLE after cooldown
-                  setTimeout(() => {
-                    fsmState = 'IDLE';
-                    fsmStateStartTime = audioContext.currentTime;
-                    presenceVerified = false;
-                    window.detectionHistory = [];
-                    window.detectionPolarities = [];
-                    const badge = document.getElementById('presenceBadge');
-                    badge.textContent = '⏳ Listening...';
-                    badge.classList.remove('verified');
-                    console.log('🔄 Cooldown complete - FSM reset to IDLE');
-                    updateFSMStateDisplay();
-                  }, COOLDOWN_DURATION * 1000);
-                } else if (!txValidationPass) {
-                  // TX was off - reject as false positive (unless Over-Air Mode)
-                  console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
-                  // Clear oldest detection to allow new pattern
-                  codeRepeatTimestamps.shift();
-                  window.detectionPolarities.shift();
-                } else {
-                  console.log(`  └─ ❌ Validation failed (cadence | consistency | core | sharpness | sign | runs | strong). Waiting for next detection`);
+                
+                // Relaxed cadence: ±50% tolerance (was ±30%)
+                const tolerance = 0.5;
+                const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
+                
+                // Also accept per-symbol cadence (rapid detections)
+                const perSymbolMatch = Math.abs(deltaT - symbolMs) <= symbolMs * 0.5;
+                const cadenceOk = cadenceMatch || perSymbolMatch;
+                
+                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms or ${symbolMs.toFixed(0)}ms) ${cadenceOk?'✅':'❌'}`);
+                
+                // Layer 6: POLARITY CONSISTENCY (diagnostic only, not blocking)
+                const polarities = window.detectionPolarities.slice(-2);
+                const polarityConsistent = polarities[0] === polarities[1];
+                console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
+                
+            // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
+            const detections = window.detectionHistory.slice(-2);
+            const allTxOn = detections.every(d => d.txWasRunning);
+            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+            const txValidationPass = isOverAirMode ? true : allTxOn;
+            console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
+            
+            if (cadenceOk && txValidationPass) {
+              // 🎉 UNLOCK!
+              fsmState = 'UNLOCKED';
+              fsmLockoutUntil = now + COOLDOWN_DURATION;
+              presenceVerified = true;
+              
+              const badge = document.getElementById('presenceBadge');
+              badge.textContent = '🔓 UNLOCKED';
+              badge.classList.add('verified');
+              
+              // Log detection quality for analysis
+              console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
+              console.log(`  ├─ Detections: 2/2 (interval: ${deltaT.toFixed(0)}ms)`);
+              console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
+              console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
+              console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
+              console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
+              
+              // Warning if mixed polarity (diagnostic only)
+              if (!polarityConsistent) {
+                console.warn(`⚠️ Mixed polarity detected - signal may have interference`);
+              }
+              
+              updateFSMStateDisplay();
+              
+              // Reset to IDLE after cooldown
+              setTimeout(() => {
+                fsmState = 'IDLE';
+                fsmStateStartTime = audioContext.currentTime;
+                presenceVerified = false;
+                window.detectionHistory = [];
+                window.detectionPolarities = [];
+                const badge = document.getElementById('presenceBadge');
+                badge.textContent = '⏳ Listening...';
+                badge.classList.remove('verified');
+                console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                updateFSMStateDisplay();
+              }, COOLDOWN_DURATION * 1000);
+            } else if (!txValidationPass) {
+              // TX was off - reject as false positive (unless Over-Air Mode)
+              console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
+              // Clear oldest detection to allow new pattern
+              codeRepeatTimestamps.shift();
+              window.detectionPolarities.shift();
+            } else {
+                  console.log(`  └─ ❌ Cadence check failed - waiting for next detection`);
                   // Clear oldest detection to allow new pattern
                   codeRepeatTimestamps.shift();
                   window.detectionPolarities.shift();
@@ -3045,13 +2953,6 @@
     document.getElementById('startRxBtn').addEventListener('click', startRX);
     document.getElementById('stopRxBtn').addEventListener('click', stopRX);
     document.getElementById('resetRxBtn').addEventListener('click', resetRX);
-    
-    // Over-Air Mode toggle with validation display
-    document.getElementById('overAirMode').addEventListener('change', (e) => {
-      console.log(`📡 Over-Air Mode: ${e.target.checked ? 'ENABLED' : 'DISABLED'}`);
-      document.getElementById('validationStatus').style.display = e.target.checked ? 'block' : 'none';
-    });
-    
     document.getElementById('recalibrateBtn').addEventListener('click', () => {
       if (rxRunning && currentMode === 'spectral') {
         // Reset baseline state
