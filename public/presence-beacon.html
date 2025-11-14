@@ -760,7 +760,7 @@
           <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
             <input type="checkbox" id="iphoneMode" style="width: 18px; height: 18px; cursor: pointer;">
             <span style="font-weight: 600;">📱 iPhone Mode</span>
-            <span style="opacity: 0.7; font-size: 0.9em;">(Adaptive: corr ≥0.15 + 3 votes, PSR ≥5dB, Z ≥2.2)</span>
+            <span style="opacity: 0.7; font-size: 0.9em;">(Adaptive: corr ≥0.15 + 3 votes, PSR ≥5dB, Z ≥2.2, amp ≤75dB)</span>
           </label>
         </div>
 
@@ -2023,6 +2023,8 @@
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
+          // NEW: Maximum signal amplitude threshold - rejects overly loud signals (likely unencoded audio too close)
+          const MAX_SIGNAL_AMPLITUDE_DB = isIphoneMode ? 75.0 : 85.0; // dB - reject if signal sum > this
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
           const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
@@ -2081,6 +2083,10 @@
             // Compute all detection metrics
             const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
             
+            // 0. Signal amplitude check (NEW) - reject overly loud signals (likely unencoded audio too close)
+            const signalAmplitudeDb = linearToDb(powerA + powerB);
+            const amplitudePass = signalAmplitudeDb <= MAX_SIGNAL_AMPLITUDE_DB;
+            
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
             
@@ -2110,6 +2116,7 @@
             // Log ALL candidates to diagnose why unlock isn't happening
             if (correlation > 0.15 || zScore > 1.5) {
               console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
+              console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)}dB (≤${MAX_SIGNAL_AMPLITUDE_DB}) ${amplitudePass?'✅':'❌'}`);
               console.log(`  ├─ [correlation] ${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'}`);
               console.log(`  ├─ [PSR] ${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'}`);
               console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
@@ -2119,6 +2126,12 @@
             }
             
             // PROGRESSIVE VALIDATION (get unlock working, then tighten)
+            
+            // Layer 0: AMPLITUDE CHECK (NEW) - reject overly loud signals first
+            if (!amplitudePass) {
+              console.log(`  └─ ❌ Signal too loud: ${signalAmplitudeDb.toFixed(1)}dB > ${MAX_SIGNAL_AMPLITUDE_DB}dB (likely unencoded audio too close)`);
+              return; // Reject immediately
+            }
             
             // Layer 1: CORE CRITERIA (correlation, PSR, Z-score)
             const corePass = corrPass && psrPass && zPass;
