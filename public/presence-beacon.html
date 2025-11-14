@@ -1815,7 +1815,7 @@
         if (!window.baselineDeltaSamples) window.baselineDeltaSamples = [];
         if (!window.baselineCorrelationSamples) window.baselineCorrelationSamples = [];
         
-        const currentEnergySum = linearToDb(powerA + powerB);
+        const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
         window.baselineEnergySamples.push(currentEnergySum);
         window.baselineGuardLoSamples.push(powerGuardLo);
         window.baselineGuardHiSamples.push(powerGuardHi);
@@ -2016,15 +2016,15 @@
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
           // STRICT (iPhone/Over-Air): higher thresholds and more votes
-          const CORR_THRESHOLD = isIphoneMode ? 0.27 : 0.30;
-          const PSR_THRESHOLD = isIphoneMode ? 9.0 : 6.0;
-          const Z_THRESHOLD = isIphoneMode ? 3.2 : 3.0;
-          const REQUIRED_VOTES = isIphoneMode ? 4 : 2;
+          const CORR_THRESHOLD = isIphoneMode ? 0.20 : 0.30;
+          const PSR_THRESHOLD = isIphoneMode ? 6.0 : 6.0;
+          const Z_THRESHOLD = isIphoneMode ? 3.0 : 3.0;
+          const REQUIRED_VOTES = isIphoneMode ? 3 : 2;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - lenient for acoustic coupling
           const GUARD_THRESHOLD = isIphoneMode ? 10.0 : 20.0; // dB - stricter on iPhone
-          // NEW: Maximum signal amplitude threshold - rejects overly loud signals (likely unencoded audio too close)
-          const MAX_SIGNAL_AMPLITUDE_DB = isIphoneMode ? 75.0 : 85.0; // dB - reject if signal > this
+          // NEW: Maximum signal amplitude threshold (dBFS) - rejects overly loud signals (likely unencoded audio too close)
+          const MAX_SIGNAL_DBFS = isIphoneMode ? -25.0 : -20.0; // reject if signal > this (closer to 0 is louder)
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
           const VOTE_WINDOW = isIphoneMode ? 6.0 : 8.0; // seconds - tighter window on iPhone
@@ -2083,9 +2083,9 @@
             // Compute all detection metrics
             const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
             
-            // 0. Signal amplitude check (NEW) - reject overly loud signals (likely unencoded audio too close)
-            const signalAmplitudeDb = Math.max(linearToDb(powerA), linearToDb(powerB));
-            const amplitudePass = signalAmplitudeDb <= MAX_SIGNAL_AMPLITUDE_DB;
+            // 0. Signal amplitude check (dBFS) - use direct dB values from band power
+            const signalAmplitudeDb = Math.max(powerA, powerB);
+            const amplitudePass = signalAmplitudeDb <= MAX_SIGNAL_DBFS;
             
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
@@ -2104,7 +2104,7 @@
             const medianDeltaPass = medianDelta >= MEDIAN_DELTA_THRESHOLD;
             
             // 5. Energy balance check: |(E(A)+E(B)) - baseline| ≤ 1.0 dB
-            const currentEnergySum = linearToDb(powerA + powerB);
+            const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
             const energyDeviation = Math.abs(currentEnergySum - baselineEnergySum);
             const energyBalancePass = energyDeviation <= ENERGY_BALANCE_THRESHOLD;
             
@@ -2116,7 +2116,7 @@
             // Log ALL candidates to diagnose why unlock isn't happening
             if (correlation > 0.15 || zScore > 1.5) {
               console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
-              console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)}dB (≤${MAX_SIGNAL_AMPLITUDE_DB}) ${amplitudePass?'✅':'❌'}`);
+              console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)} dBFS (≤${MAX_SIGNAL_DBFS}) ${amplitudePass?'✅':'❌'}`);
               console.log(`  ├─ [correlation] ${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'}`);
               console.log(`  ├─ [PSR] ${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'}`);
               console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
@@ -2129,7 +2129,7 @@
             
             // Layer 0: AMPLITUDE CHECK (NEW) - reject overly loud signals first
             if (!amplitudePass) {
-              console.log(`  └─ ❌ Signal too loud: ${signalAmplitudeDb.toFixed(1)}dB > ${MAX_SIGNAL_AMPLITUDE_DB}dB (likely unencoded audio too close)`);
+              console.log(`  └─ ❌ Signal too loud: ${signalAmplitudeDb.toFixed(1)} dBFS > ${MAX_SIGNAL_DBFS} (likely unencoded audio too close)`);
               return; // Reject immediately
             }
             
@@ -2172,7 +2172,8 @@
                 psr: peakToSidelobeRatio,
                 zScore: zScore,
                 medianDelta: medianDelta,
-                txWasRunning: txRunning
+                txWasRunning: txRunning,
+                phase: best.phase
               };
               
               if (!window.detectionHistory) window.detectionHistory = [];
@@ -2188,81 +2189,87 @@
               
               // Layer 5: REQUIRE N DETECTIONS with proper cadence (adaptive for iPhone)
               if (codeRepeatTimestamps.length >= REQUIRED_VOTES) {
-                const lastTwo = codeRepeatTimestamps.slice(-2);
-                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
                 const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
-                
-                // Cadence: strict full-code repeat on iPhone/Over-Air (filter symbol-spaced coincidences)
-                const tolerance = isIphoneMode ? 0.08 : 0.15;
-                const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
-                
-                // Per-symbol cadence allowed only when NOT Over-Air and NOT iPhone, with tight tolerance
-                const perSymbolAllowed = !isOverAirMode && !isIphoneMode;
-                const perSymbolMatch = perSymbolAllowed && Math.abs(deltaT - symbolMs) <= symbolMs * 0.15;
-                const cadenceOk = cadenceMatch || perSymbolMatch;
-                
-                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms${perSymbolAllowed ? ` or ${symbolMs.toFixed(0)}ms` : ''}) ${cadenceOk?'✅':'❌'}`);
-                
-                // Layer 6: POLARITY CONSISTENCY (blocking on iPhone/Over-Air)
-                const polarities = window.detectionPolarities.slice(-2);
-                const polarityConsistent = polarities[0] === polarities[1];
-                const polarityPass = (isIphoneMode || isOverAirMode) ? polarityConsistent : true;
-                console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
-                
-            // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
-            const detections = window.detectionHistory.slice(-2);
-            const allTxOn = detections.every(d => d.txWasRunning);
-            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-            const txValidationPass = isOverAirMode ? true : allTxOn;
-            console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
-            
-            if (cadenceOk && txValidationPass && polarityPass) {
-              // 🎉 UNLOCK!
-              fsmState = 'UNLOCKED';
-              fsmLockoutUntil = now + COOLDOWN_DURATION;
-              presenceVerified = true;
-              
-              const badge = document.getElementById('presenceBadge');
-              badge.textContent = '🔓 UNLOCKED';
-              badge.classList.add('verified');
-              
-              // Log detection quality for analysis
-              console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-              console.log(`  ├─ Detections: ${REQUIRED_VOTES}/${REQUIRED_VOTES} (interval: ${deltaT.toFixed(0)}ms)`);
-              console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
-              console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
-              console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
-              console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
-              
-              // Warning if mixed polarity (diagnostic only)
-              if (!polarityConsistent) {
-                console.warn(`⚠️ Mixed polarity detected - signal may have interference`);
-              }
-              
-              updateFSMStateDisplay();
-              
-              // Reset to IDLE after cooldown
-              setTimeout(() => {
-                fsmState = 'IDLE';
-                fsmStateStartTime = audioContext.currentTime;
-                presenceVerified = false;
-                window.detectionHistory = [];
-                window.detectionPolarities = [];
-                const badge = document.getElementById('presenceBadge');
-                badge.textContent = '⏳ Listening...';
-                badge.classList.remove('verified');
-                console.log('🔄 Cooldown complete - FSM reset to IDLE');
-                updateFSMStateDisplay();
-              }, COOLDOWN_DURATION * 1000);
-            } else if (!txValidationPass) {
-              // TX was off - reject as false positive (unless Over-Air Mode)
-              console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
-              // Clear oldest detection to allow new pattern
-              codeRepeatTimestamps.shift();
-              window.detectionPolarities.shift();
-            } else {
-                  console.log(`  └─ ❌ Cadence check failed - waiting for next detection`);
+
+                const times = codeRepeatTimestamps.slice(-REQUIRED_VOTES);
+                const intervals = times.slice(1).map((t,i) => (times[i+1] - times[i]) * 1000);
+                const strictTol = isIphoneMode ? 0.05 : 0.15; // ±5% on iPhone
+                const cadenceAll = intervals.length > 0 && intervals.every(iv => Math.abs(iv - expectedRepeatMs) <= expectedRepeatMs * strictTol);
+
+                // Phase stability (same correlation phase across votes, allow ±1 bin jitter)
+                const lastDetections = window.detectionHistory.slice(-REQUIRED_VOTES);
+                const phases = lastDetections.map(d => d.phase);
+                const phaseStable = phases.every(p => Math.abs(p - phases[0]) <= 1);
+
+                // Polarity consistency across all votes
+                const lastPols = window.detectionPolarities.slice(-REQUIRED_VOTES);
+                const polarityConsistentAll = lastPols.every(p => p === lastPols[0]);
+                const polarityPass = (isIphoneMode || isOverAirMode) ? polarityConsistentAll : true;
+
+                // Average PSR across votes
+                const avgPSR = lastDetections.reduce((a, d) => a + d.psr, 0) / Math.max(1, lastDetections.length);
+                const avgPsrThreshold = isIphoneMode ? 7.0 : 6.0;
+                const avgPsrPass = avgPSR >= avgPsrThreshold;
+
+                console.log(`  ├─ [cadence] intervals=${intervals.map(iv => iv.toFixed(0)).join(', ')}ms (expected: ${expectedRepeatMs.toFixed(0)}ms, tol ±${(strictTol*100).toFixed(0)}%) ${cadenceAll?'✅':'❌'}`);
+                console.log(`  ├─ [phase] ${phases.join(', ')} ${phaseStable ? '✅ stable' : '❌ unstable'}`);
+                console.log(`  ├─ [polarity] ${lastPols.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistentAll ? '✅ consistent' : '⚠️ mixed'}`);
+                console.log(`  ├─ [PSR avg] ${avgPSR.toFixed(1)}dB (≥${avgPsrThreshold}) ${avgPsrPass ? '✅' : '❌'}`);
+
+                // Layer 7: TX VALIDATION (MANDATORY when not Over-Air)
+                const detections = window.detectionHistory.slice(-REQUIRED_VOTES);
+                const allTxOn = detections.every(d => d.txWasRunning);
+                const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+                const txValidationPass = isOverAirMode ? true : allTxOn;
+                console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
+
+                if (cadenceAll && txValidationPass && polarityPass && phaseStable && avgPsrPass) {
+                  // 🎉 UNLOCK!
+                  fsmState = 'UNLOCKED';
+                  fsmLockoutUntil = now + COOLDOWN_DURATION;
+                  presenceVerified = true;
+
+                  const badge = document.getElementById('presenceBadge');
+                  badge.textContent = '🔓 UNLOCKED';
+                  badge.classList.add('verified');
+
+                  // Log detection quality for analysis
+                  console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
+                  console.log(`  ├─ Detections: ${REQUIRED_VOTES}/${REQUIRED_VOTES} (intervals: [${intervals.map(iv=>iv.toFixed(0)).join(', ')}] ms)`);
+                  console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
+                  console.log(`  ├─ Polarity: ${polarityConsistentAll ? '✅ consistent' : '⚠️ mixed'}`);
+                  console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
+                  console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
+
+                  updateFSMStateDisplay();
+
+                  // Reset to IDLE after cooldown
+                  setTimeout(() => {
+                    fsmState = 'IDLE';
+                    fsmStateStartTime = audioContext.currentTime;
+                    presenceVerified = false;
+                    window.detectionHistory = [];
+                    window.detectionPolarities = [];
+                    const badge = document.getElementById('presenceBadge');
+                    badge.textContent = '⏳ Listening...';
+                    badge.classList.remove('verified');
+                    console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                    updateFSMStateDisplay();
+                  }, COOLDOWN_DURATION * 1000);
+                } else if (!txValidationPass) {
+                  // TX was off - reject as false positive (unless Over-Air Mode)
+                  console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
+                  // Clear oldest detection to allow new pattern
+                  codeRepeatTimestamps.shift();
+                  window.detectionPolarities.shift();
+                } else {
+                  const reasons = [];
+                  if (!cadenceAll) reasons.push('cadence');
+                  if (!phaseStable) reasons.push('phase');
+                  if (!polarityPass) reasons.push('polarity');
+                  if (!avgPsrPass) reasons.push('avg PSR');
+                  console.log(`  └─ ❌ Validation failed (${reasons.join(', ')}) - waiting for next detection`);
                   // Clear oldest detection to allow new pattern
                   codeRepeatTimestamps.shift();
                   window.detectionPolarities.shift();
