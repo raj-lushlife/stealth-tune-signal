@@ -1002,7 +1002,13 @@
       return computeCRC8(payload);
     }
     
-    // Validate CRC with ±1 time window tolerance (±10s)
+    // Generate static CRC payload (for offline encoding)
+    function computeStaticCRC() {
+      const payload = [...PN31_CODE.map(v => v > 0 ? 1 : 0)];
+      return computeCRC8(payload);
+    }
+    
+    // Validate CRC with ±1 time window tolerance (±10s) and static offline CRC fallback
     function validateCRC(receivedCRC) {
       const currentWindow = Math.floor(Date.now() / 10000);
       
@@ -1016,6 +1022,13 @@
           console.log(`  └─ 🔐 CRC MATCH @ window ${timeWindowId} (offset: ${offset})`);
           return true;
         }
+      }
+      
+      // Fallback: accept static CRC (used by offline encoder)
+      const staticCRC = computeStaticCRC();
+      if (receivedCRC === staticCRC) {
+        console.log(`  └─ 🔐 CRC MATCH (static offline CRC)`);
+        return true;
       }
       
       console.log(`  └─ ❌ CRC MISMATCH: received=0x${receivedCRC.toString(16).padStart(2,'0')}`);
@@ -2912,9 +2925,9 @@
         }
         
         // Encode CRC-8 after each PN31 repeat (8 symbols)
-        const crcValue = generateCRCPayload();
+        const crcValue = computeStaticCRC();
         const crcSymbols = encodeCRCAsSymbols(crcValue);
-        console.log(`  🔐 Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} after repeat ${repeat + 1}`);
+        console.log(`  🔐 Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} after repeat ${repeat + 1} (static for offline)`);
         
         for (let j = 0; j < 8; j++) {
           const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
