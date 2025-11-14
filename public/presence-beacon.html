@@ -956,7 +956,9 @@
       for (let byte of data) {
         crc ^= (byte & 0xFF);
         for (let i = 0; i < 8; i++) {
-          crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) : (crc << 1);
+          const carry = (crc & 0x80) !== 0;
+          crc = ((crc << 1) & 0xFF);
+          if (carry) crc ^= 0x07;
         }
       }
       return crc & 0xFF;
@@ -1385,8 +1387,8 @@
           symbolIndex++;
           
           // Check if we just finished a PN31 code and need to transmit CRC
-          if (symbolIndex % PN31_CODE.length === 0 && symbolIndex < totalSymbols) {
-            // Transmit CRC after each PN31 repeat
+          if (symbolIndex % PN31_CODE.length === 0) {
+            // Transmit CRC after each PN31 repeat (including the last one)
             const crcValue = generateCRCPayload();
             const crcSymbols = encodeCRCAsSymbols(crcValue);
             console.log(`🔐 TX: Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} (8 symbols)`);
@@ -2295,11 +2297,13 @@
               // Convert deltas to symbol polarities for CRC decoding
               // Use sign of delta: positive delta → +1, negative → -1
               const crcPolaritySymbols = crcSymbols.map(delta => delta > 0 ? 1 : -1);
+              // Normalize by detection polarity so +1/-1 mapping matches TX
+              const crcAligned = crcPolaritySymbols.map(s => s * detectionPolarity);
               
               // Decode CRC
-              const receivedCRC = decodeCRCFromSymbols(crcPolaritySymbols);
+              const receivedCRC = decodeCRCFromSymbols(crcAligned);
               
-              console.log(`  ├─ 🔐 CRC CHECK (phase=${best.phase}): symbols=[${crcPolaritySymbols.join(',')}], decoded=0x${receivedCRC.toString(16).padStart(2,'0')}`);
+              console.log(`  ├─ 🔐 CRC CHECK (phase=${best.phase}): symbols=[${crcAligned.join(',')}], decoded=0x${receivedCRC.toString(16).padStart(2,'0')}`);
               
               // LAYER 6: CRC VERIFICATION (IRONCLAD - replaces all threshold fuzziness)
               const crcValid = validateCRC(receivedCRC);
