@@ -2017,7 +2017,7 @@
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
           // STRICT (iPhone/Over-Air): higher thresholds and more votes
           const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;
-          const PSR_THRESHOLD = isIphoneMode ? 4.0 : 6.0;
+          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0;
           const Z_THRESHOLD = isIphoneMode ? 1.8 : 3.0;
           const REQUIRED_VOTES = isIphoneMode ? 2 : 2;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
