@@ -2087,7 +2087,8 @@
             // 0. Signal amplitude check (dBFS) - use direct dB values from band power
             const signalAmplitudeDb = Math.max(powerA, powerB);
             const amplitudeInRange = (signalAmplitudeDb <= MAX_SIGNAL_DBFS) && (signalAmplitudeDb >= MIN_SIGNAL_DBFS);
-            const noiseFloorPass = broadbandPower >= (baselineBroadbandMean + (isIphoneMode ? 2.0 : 1.0));
+            // Noise floor check: only apply after calibration is complete
+            const noiseFloorPass = !baselineCalibrated || (broadbandPower >= (baselineBroadbandMean + (isIphoneMode ? 2.0 : 1.0)));
             const amplitudePass = amplitudeInRange && noiseFloorPass;
             
             // 1. Correlation check
