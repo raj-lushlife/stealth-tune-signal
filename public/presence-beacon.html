@@ -2016,18 +2016,18 @@
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
           // STRICT (iPhone/Over-Air): higher thresholds and more votes
-          const CORR_THRESHOLD = isIphoneMode ? 0.20 : 0.30;
-          const PSR_THRESHOLD = isIphoneMode ? 6.0 : 6.0;
-          const Z_THRESHOLD = isIphoneMode ? 3.0 : 3.0;
-          const REQUIRED_VOTES = isIphoneMode ? 3 : 2;
+          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;
+          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0;
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 3.0;
+          const REQUIRED_VOTES = isIphoneMode ? 2 : 2;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - lenient for acoustic coupling
           const GUARD_THRESHOLD = isIphoneMode ? 10.0 : 20.0; // dB - stricter on iPhone
           // NEW: Maximum signal amplitude threshold (dBFS) - rejects overly loud signals (likely unencoded audio too close)
-          const MAX_SIGNAL_DBFS = isIphoneMode ? -25.0 : -20.0; // reject if signal > this (closer to 0 is louder)
+          const MAX_SIGNAL_DBFS = isIphoneMode ? -8.0 : -6.0; // allow normal iPhone TX levels (-14 to -20 dBFS), reject near-0 dBFS
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
-          const VOTE_WINDOW = isIphoneMode ? 6.0 : 8.0; // seconds - tighter window on iPhone
+          const VOTE_WINDOW = isIphoneMode ? 10.0 : 12.0; // seconds - enough to capture 2 intra-burst repeats
           const COOLDOWN_DURATION = 45.0; // seconds
           
           // ===== STATE: IDLE =====
