@@ -760,7 +760,7 @@
           <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
             <input type="checkbox" id="iphoneMode" style="width: 18px; height: 18px; cursor: pointer;">
             <span style="font-weight: 600;">📱 iPhone Mode</span>
-            <span style="opacity: 0.7; font-size: 0.9em;">(Adaptive: corr ≥0.15 + 3 votes, PSR ≥5dB, Z ≥2.2, amp ≤75dB)</span>
+            <span style="opacity: 0.7; font-size: 0.9em;">(Adaptive: corr ≥0.15 + 2 votes, PSR ≥5dB, Z ≥1.8, amp gate relaxed)</span>
           </label>
         </div>
 
@@ -2018,11 +2018,11 @@
           // STRICT (iPhone/Over-Air): higher thresholds and more votes
           const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;
           const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0;
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 3.0;
+          const Z_THRESHOLD = isIphoneMode ? 1.8 : 3.0;
           const REQUIRED_VOTES = isIphoneMode ? 2 : 2;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - lenient for acoustic coupling
-          const GUARD_THRESHOLD = isIphoneMode ? 10.0 : 20.0; // dB - stricter on iPhone
+          const GUARD_THRESHOLD = isIphoneMode ? 12.0 : 20.0; // dB - slightly relaxed on iPhone
           // NEW: Maximum signal amplitude threshold (dBFS) - rejects overly loud signals (likely unencoded audio too close)
           const MAX_SIGNAL_DBFS = isIphoneMode ? -8.0 : -6.0; // allow normal iPhone TX levels (-14 to -20 dBFS), reject near-0 dBFS
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
@@ -2085,7 +2085,7 @@
             
             // 0. Signal amplitude check (dBFS) - use direct dB values from band power
             const signalAmplitudeDb = Math.max(powerA, powerB);
-            const amplitudePass = signalAmplitudeDb <= MAX_SIGNAL_DBFS;
+            const amplitudePass = isIphoneMode ? true : (signalAmplitudeDb <= MAX_SIGNAL_DBFS);
             
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
