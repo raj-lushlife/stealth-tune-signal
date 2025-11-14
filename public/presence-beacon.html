@@ -2133,8 +2133,9 @@
               return; // Reject immediately
             }
             
-            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score, guards in iPhone mode)
-            const corePass = corrPass && psrPass && zPass && (isIphoneMode ? guardsPass : true);
+            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score)
+            // Note: Guards disabled in iPhone mode due to frequency overlap
+            const corePass = corrPass && psrPass && zPass;
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
             const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
@@ -2158,7 +2159,8 @@
               if (!corrPass) failures.push(`Correlation too low: ${correlation.toFixed(3)} < ${CORR_THRESHOLD}`);
               if (!psrPass) failures.push(`PSR too low: ${peakToSidelobeRatio.toFixed(1)}dB < ${PSR_THRESHOLD}dB`);
               if (!zPass) failures.push(`Z-score too low: ${zScore.toFixed(2)} < ${Z_THRESHOLD}`);
-              if (isIphoneMode && !guardsPass) failures.push(`Guards unstable: Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB > ${GUARD_THRESHOLD}dB`);
+              // Guards are diagnostic only in iPhone mode (not blocking)
+              if (!isIphoneMode && !guardsPass) failures.push(`Guards unstable: Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB > ${GUARD_THRESHOLD}dB`);
               console.log(`  └─ ❌ ${failures.join(', ')}`);
               return;
             }
