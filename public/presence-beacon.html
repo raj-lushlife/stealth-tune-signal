@@ -2015,19 +2015,19 @@
           
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          // Adaptive (iPhone): lower thresholds but require more votes and stricter cadence
-          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;
-          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0;
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 3.0;
-          const REQUIRED_VOTES = isIphoneMode ? 3 : 2;
+          // STRICT (iPhone/Over-Air): higher thresholds and more votes
+          const CORR_THRESHOLD = isIphoneMode ? 0.27 : 0.30;
+          const PSR_THRESHOLD = isIphoneMode ? 9.0 : 6.0;
+          const Z_THRESHOLD = isIphoneMode ? 3.2 : 3.0;
+          const REQUIRED_VOTES = isIphoneMode ? 4 : 2;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
-          const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
-          const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
+          const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - lenient for acoustic coupling
+          const GUARD_THRESHOLD = isIphoneMode ? 10.0 : 20.0; // dB - stricter on iPhone
           // NEW: Maximum signal amplitude threshold - rejects overly loud signals (likely unencoded audio too close)
-          const MAX_SIGNAL_AMPLITUDE_DB = isIphoneMode ? 75.0 : 85.0; // dB - reject if signal sum > this
+          const MAX_SIGNAL_AMPLITUDE_DB = isIphoneMode ? 75.0 : 85.0; // dB - reject if signal > this
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
-          const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
+          const VOTE_WINDOW = isIphoneMode ? 6.0 : 8.0; // seconds - tighter window on iPhone
           const COOLDOWN_DURATION = 45.0; // seconds
           
           // ===== STATE: IDLE =====
@@ -2184,7 +2184,7 @@
               codeRepeatTimestamps.push(now);
               window.detectionPolarities.push(detectionPolarity);
               
-              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/2 (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${REQUIRED_VOTES} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
               
               // Layer 5: REQUIRE N DETECTIONS with proper cadence (adaptive for iPhone)
               if (codeRepeatTimestamps.length >= REQUIRED_VOTES) {
@@ -2193,20 +2193,21 @@
                 const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
                 
-                // Cadence: allow only full-code repeat on iPhone (filter symbol-spaced coincidences)
-                const tolerance = 0.5;
+                // Cadence: strict full-code repeat on iPhone/Over-Air (filter symbol-spaced coincidences)
+                const tolerance = isIphoneMode ? 0.08 : 0.15;
                 const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
                 
-                // Per-symbol cadence only allowed off iPhone mode
-                const perSymbolMatch = !isIphoneMode && Math.abs(deltaT - symbolMs) <= symbolMs * 0.5;
+                // Per-symbol cadence allowed only when NOT Over-Air and NOT iPhone, with tight tolerance
+                const perSymbolAllowed = !isOverAirMode && !isIphoneMode;
+                const perSymbolMatch = perSymbolAllowed && Math.abs(deltaT - symbolMs) <= symbolMs * 0.15;
                 const cadenceOk = cadenceMatch || perSymbolMatch;
                 
-                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms or ${symbolMs.toFixed(0)}ms) ${cadenceOk?'✅':'❌'}`);
+                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms${perSymbolAllowed ? ` or ${symbolMs.toFixed(0)}ms` : ''}) ${cadenceOk?'✅':'❌'}`);
                 
-                // Layer 6: POLARITY CONSISTENCY (blocking on iPhone)
+                // Layer 6: POLARITY CONSISTENCY (blocking on iPhone/Over-Air)
                 const polarities = window.detectionPolarities.slice(-2);
                 const polarityConsistent = polarities[0] === polarities[1];
-                const polarityPass = isIphoneMode ? polarityConsistent : true;
+                const polarityPass = (isIphoneMode || isOverAirMode) ? polarityConsistent : true;
                 console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
                 
             // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
