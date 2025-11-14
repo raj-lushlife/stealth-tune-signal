@@ -2015,19 +2015,20 @@
           
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          // iPhone Mode: Balanced thresholds - relaxed but not too permissive
-          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;  
-          const PSR_THRESHOLD = isIphoneMode ? 4.5 : 6.0;     
-          const Z_THRESHOLD = isIphoneMode ? 1.6 : 3.0;       
-          const REQUIRED_VOTES = isIphoneMode ? 2 : 2;
+          // iPhone Mode: Balanced thresholds - relaxed but robust against noise
+          const CORR_THRESHOLD = isIphoneMode ? 0.17 : 0.30;
+          const PSR_THRESHOLD = isIphoneMode ? 5.5 : 6.0;
+          const Z_THRESHOLD = isIphoneMode ? 1.8 : 3.0;
+          const REQUIRED_VOTES = isIphoneMode ? 3 : 2; // require 3 votes to reduce false positives
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB
-          const ENERGY_BALANCE_THRESHOLD = isIphoneMode ? 20.0 : 5.0; // dB - relaxed but not disabled
-          const GUARD_THRESHOLD = isIphoneMode ? 25.0 : 20.0;         // dB - relaxed but not disabled
-          // Maximum signal amplitude threshold (dBFS) - rejects overly loud signals
+          const ENERGY_BALANCE_THRESHOLD = isIphoneMode ? 15.0 : 5.0; // dB
+          const GUARD_THRESHOLD = isIphoneMode ? 20.0 : 20.0;         // dB
+          // Signal amplitude bounds (dBFS) - reject overly loud AND overly quiet
           const MAX_SIGNAL_DBFS = isIphoneMode ? -8.0 : -6.0;
+          const MIN_SIGNAL_DBFS = isIphoneMode ? -60.0 : -60.0;
           const CADENCE_WINDOW_MS = 0; // unused
           const PREAMBLE_TIMEOUT = 3.0; // seconds
-          const VOTE_WINDOW = isIphoneMode ? 10.0 : 12.0; // seconds
+          const VOTE_WINDOW = isIphoneMode ? 12.0 : 12.0; // seconds
           const COOLDOWN_DURATION = 45.0; // seconds
           
           // ===== STATE: IDLE =====
@@ -2085,7 +2086,9 @@
             
             // 0. Signal amplitude check (dBFS) - use direct dB values from band power
             const signalAmplitudeDb = Math.max(powerA, powerB);
-            const amplitudePass = isIphoneMode ? true : (signalAmplitudeDb <= MAX_SIGNAL_DBFS);
+            const amplitudeInRange = (signalAmplitudeDb <= MAX_SIGNAL_DBFS) && (signalAmplitudeDb >= MIN_SIGNAL_DBFS);
+            const noiseFloorPass = broadbandPower >= (baselineBroadbandMean + (isIphoneMode ? 2.0 : 1.0));
+            const amplitudePass = amplitudeInRange && noiseFloorPass;
             
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
@@ -2129,7 +2132,7 @@
             
             // Layer 0: AMPLITUDE CHECK (NEW) - reject overly loud signals first
             if (!amplitudePass) {
-              console.log(`  └─ ❌ Signal too loud: ${signalAmplitudeDb.toFixed(1)} dBFS > ${MAX_SIGNAL_DBFS} (likely unencoded audio too close)`);
+              console.log(`  └─ ❌ Signal out of range/noise floor: amp=${signalAmplitudeDb.toFixed(1)} dBFS [${MIN_SIGNAL_DBFS}..${MAX_SIGNAL_DBFS}], Δbroadband=${(broadbandPower - baselineBroadbandMean).toFixed(1)}dB`);
               return; // Reject immediately
             }
             
@@ -2164,6 +2167,17 @@
             }
             
             if (corePass && medianDeltaValidation) {
+              // Debounce: require minimum separation between votes to avoid rapid double-counting
+              const symbolMsNow = parseFloat(document.getElementById('spectralSymbolDuration').value);
+              const minSeparationSec = (PN31_CODE.length * symbolMsNow * 0.6) / 1000; // 60% of code length
+              const lastTs = codeRepeatTimestamps.length > 0 ? codeRepeatTimestamps[codeRepeatTimestamps.length - 1] : null;
+              if (lastTs && (now - lastTs) < minSeparationSec) {
+                if (frameCount % 60 === 0) {
+                  console.log(`  └─ ⏱️ Skipping vote (within ${((now - lastTs)*1000).toFixed(0)}ms < ${Math.round(minSeparationSec*1000)}ms min separation)`);
+                }
+                return;
+              }
+              
               // Store detection with metadata
               const detection = {
                 time: now,
@@ -2177,6 +2191,17 @@
               };
               
               if (!window.detectionHistory) window.detectionHistory = [];
+              // Debounce: require minimum separation between votes to avoid rapid double-counting
+              const symbolMsNow = parseFloat(document.getElementById('spectralSymbolDuration').value);
+              const minSepMs = PN31_CODE.length * symbolMsNow * 0.6; // 60% of code length
+              const lastTs = codeRepeatTimestamps.length > 0 ? codeRepeatTimestamps[codeRepeatTimestamps.length - 1] : null;
+              if (lastTs && (now - lastTs) * 1000 < minSepMs) {
+                if (frameCount % 60 === 0) {
+                  console.log(`  └─ ⏱️ Skipping vote (interval ${((now - lastTs)*1000).toFixed(0)}ms < ${Math.round(minSepMs)}ms min separation)`);
+                }
+                return;
+              }
+
               window.detectionHistory.push(detection);
               
               // Keep only recent history (last 10 seconds)
@@ -2194,11 +2219,9 @@
 
                 const times = codeRepeatTimestamps.slice(-REQUIRED_VOTES);
                 const intervals = times.slice(1).map((t,i) => (times[i+1] - times[i]) * 1000);
-                // LENIENT CADENCE for iPhone Mode: Just require detections within 50-5000ms
-                // STRICT for wired: expect ~1860ms ±25%
-                const cadenceAll = isIphoneMode 
-                  ? intervals.every(iv => iv >= 50 && iv <= 5000)
-                  : intervals.every(iv => Math.abs(iv - expectedRepeatMs) <= expectedRepeatMs * 0.25);
+                // Cadence: expect repeat near full code duration; wider tolerance for iPhone
+                const tol = isIphoneMode ? 0.40 : 0.25;
+                const cadenceAll = intervals.length > 0 && intervals.every(iv => Math.abs(iv - expectedRepeatMs) <= expectedRepeatMs * tol);
 
                 // Phase stability (same correlation phase across votes, allow ±1 bin jitter)
                 const lastDetections = window.detectionHistory.slice(-REQUIRED_VOTES);
