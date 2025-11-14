@@ -2084,7 +2084,7 @@
             const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
             
             // 0. Signal amplitude check (NEW) - reject overly loud signals (likely unencoded audio too close)
-            const signalAmplitudeDb = linearToDb(powerA + powerB);
+            const signalAmplitudeDb = Math.max(linearToDb(powerA), linearToDb(powerB));
             const amplitudePass = signalAmplitudeDb <= MAX_SIGNAL_AMPLITUDE_DB;
             
             // 1. Correlation check
@@ -2133,8 +2133,8 @@
               return; // Reject immediately
             }
             
-            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score)
-            const corePass = corrPass && psrPass && zPass;
+            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score, guards in iPhone mode)
+            const corePass = corrPass && psrPass && zPass && (isIphoneMode ? guardsPass : true);
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
             const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
@@ -2151,6 +2151,17 @@
             
             // Layer 4: MEDIAN DELTA VALIDATION - Relaxed threshold
             const medianDeltaValidation = medianDelta >= MEDIAN_DELTA_THRESHOLD; // Back to normal
+            
+            // Additional rejection messages for failed core criteria
+            if (!corePass) {
+              const failures = [];
+              if (!corrPass) failures.push(`Correlation too low: ${correlation.toFixed(3)} < ${CORR_THRESHOLD}`);
+              if (!psrPass) failures.push(`PSR too low: ${peakToSidelobeRatio.toFixed(1)}dB < ${PSR_THRESHOLD}dB`);
+              if (!zPass) failures.push(`Z-score too low: ${zScore.toFixed(2)} < ${Z_THRESHOLD}`);
+              if (isIphoneMode && !guardsPass) failures.push(`Guards unstable: Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB > ${GUARD_THRESHOLD}dB`);
+              console.log(`  └─ ❌ ${failures.join(', ')}`);
+              return;
+            }
             
             if (corePass && medianDeltaValidation) {
               // Store detection with metadata
