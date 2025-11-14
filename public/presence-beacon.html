@@ -2032,7 +2032,7 @@
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
           // Phase scan and polarity check
-          const phaseMax = 7; // Check 8 phase offsets (better tolerance to jitter)
+          const phaseMax = 15; // Increased to 15 to ensure CRC symbols are in buffer (need phase≥8 for CRC)
           let best = { corr: -1, phase: 0, sign: 1 };
           let allCorrelations = []; // For PSR calculation
           
@@ -2269,16 +2269,28 @@
             
             if (corePass && medianDeltaValidation) {
               // ========== LAYER 6: CRC VERIFICATION (IRONCLAD) ==========
-              // Extract CRC symbols (next 8 symbols after the PN31 code)
-              // The spectralSymbolBuffer should contain at least codeLen + 8 symbols
-              if (spectralSymbolBuffer.length < codeLen + 8) {
-                console.log(`  └─ ⏳ Waiting for CRC symbols (have ${spectralSymbolBuffer.length}, need ${codeLen + 8})`);
-                return; // Wait for more symbols
+              // The PN31 code was detected at phase offset 'best.phase'
+              // PN31 occupies: [length - codeLen - best.phase, length - best.phase)
+              // CRC symbols are AFTER the PN31 code: [length - best.phase, length - best.phase + 8)
+              
+              // Check if we have enough symbols for CRC extraction
+              // We need at least 8 symbols AFTER the detected PN31 code
+              if (best.phase < 8) {
+                console.log(`  └─ ⏳ Waiting for CRC symbols (phase=${best.phase}, need phase≥8 for full CRC)`);
+                return; // Wait for more symbols to arrive
               }
               
-              // Extract the 8 CRC symbols immediately following the PN31 code
-              const crcStartIdx = spectralSymbolBuffer.length - 8;
-              const crcSymbols = spectralSymbolBuffer.slice(crcStartIdx, crcStartIdx + 8);
+              // Extract the 8 CRC symbols that follow the detected PN31 code
+              const crcStartIdx = spectralSymbolBuffer.length - best.phase;
+              const crcEndIdx = crcStartIdx + 8;
+              
+              // Safety check: ensure indices are valid
+              if (crcEndIdx > spectralSymbolBuffer.length) {
+                console.log(`  └─ ⏳ CRC not fully buffered yet (need ${crcEndIdx - spectralSymbolBuffer.length} more symbols)`);
+                return;
+              }
+              
+              const crcSymbols = spectralSymbolBuffer.slice(crcStartIdx, crcEndIdx);
               
               // Convert deltas to symbol polarities for CRC decoding
               // Use sign of delta: positive delta → +1, negative → -1
@@ -2287,7 +2299,7 @@
               // Decode CRC
               const receivedCRC = decodeCRCFromSymbols(crcPolaritySymbols);
               
-              console.log(`  ├─ 🔐 CRC CHECK: symbols=[${crcPolaritySymbols.join(',')}], decoded=0x${receivedCRC.toString(16).padStart(2,'0')}`);
+              console.log(`  ├─ 🔐 CRC CHECK (phase=${best.phase}): symbols=[${crcPolaritySymbols.join(',')}], decoded=0x${receivedCRC.toString(16).padStart(2,'0')}`);
               
               // LAYER 6: CRC VERIFICATION (IRONCLAD - replaces all threshold fuzziness)
               const crcValid = validateCRC(receivedCRC);
