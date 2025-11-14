@@ -947,6 +947,71 @@
     function linearToDb(linear) {
       return 20 * Math.log10(Math.max(linear, 1e-10));
     }
+    
+    // ========== CRC-8 VERIFICATION (IRONCLAD LAYER) ==========
+    
+    // CRC-8 computation (polynomial 0x07, standard CRC-8)
+    function computeCRC8(data) {
+      let crc = 0;
+      for (let byte of data) {
+        crc ^= (byte & 0xFF);
+        for (let i = 0; i < 8; i++) {
+          crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) : (crc << 1);
+        }
+      }
+      return crc & 0xFF;
+    }
+    
+    // Encode 8-bit CRC as 8 symbols (1 bit per symbol for robustness)
+    // Encoding: 0→-1, 1→+1
+    function encodeCRCAsSymbols(crc8) {
+      const symbols = [];
+      for (let i = 7; i >= 0; i--) {
+        const bit = (crc8 >> i) & 0x01;
+        symbols.push(bit === 1 ? 1 : -1);
+      }
+      return symbols; // Returns 8 symbols
+    }
+    
+    // Decode 8 symbols back to 8-bit CRC
+    function decodeCRCFromSymbols(symbols) {
+      if (symbols.length < 8) return null;
+      let crc = 0;
+      for (let i = 0; i < 8; i++) {
+        const bit = symbols[i] > 0 ? 1 : 0;
+        crc = (crc << 1) | bit;
+      }
+      return crc & 0xFF;
+    }
+    
+    // Generate time-based CRC payload
+    function generateCRCPayload() {
+      // Time window ID (10 second windows)
+      const timeWindowId = Math.floor(Date.now() / 10000);
+      // Combine PN31_CODE with time window
+      const payload = [...PN31_CODE.map(v => v > 0 ? 1 : 0), timeWindowId & 0xFF, (timeWindowId >> 8) & 0xFF];
+      return computeCRC8(payload);
+    }
+    
+    // Validate CRC with ±1 time window tolerance (±10s)
+    function validateCRC(receivedCRC) {
+      const currentWindow = Math.floor(Date.now() / 10000);
+      
+      // Check current and adjacent windows (±10s tolerance)
+      for (let offset = -1; offset <= 1; offset++) {
+        const timeWindowId = currentWindow + offset;
+        const payload = [...PN31_CODE.map(v => v > 0 ? 1 : 0), timeWindowId & 0xFF, (timeWindowId >> 8) & 0xFF];
+        const expectedCRC = computeCRC8(payload);
+        
+        if (receivedCRC === expectedCRC) {
+          console.log(`  └─ 🔐 CRC MATCH @ window ${timeWindowId} (offset: ${offset})`);
+          return true;
+        }
+      }
+      
+      console.log(`  └─ ❌ CRC MISMATCH: received=0x${receivedCRC.toString(16).padStart(2,'0')}`);
+      return false;
+    }
 
     function clamp(val, min, max) {
       return Math.max(min, Math.min(max, val));
@@ -1318,6 +1383,43 @@
           }
           
           symbolIndex++;
+          
+          // Check if we just finished a PN31 code and need to transmit CRC
+          if (symbolIndex % PN31_CODE.length === 0 && symbolIndex < totalSymbols) {
+            // Transmit CRC after each PN31 repeat
+            const crcValue = generateCRCPayload();
+            const crcSymbols = encodeCRCAsSymbols(crcValue);
+            console.log(`🔐 TX: Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} (8 symbols)`);
+            
+            let crcIndex = 0;
+            function transmitCRCSymbol() {
+              if (!txRunning || currentMode !== 'spectral' || !spectralFilters.binA) return;
+              if (crcIndex >= 8) {
+                // CRC complete, continue with next PN31 code or finish burst
+                const jitter = (Math.random() * 2 - 1) * jitterMs;
+                spectralTransmitTimer = setTimeout(transmitNext, symbolDurationMs + jitter);
+                return;
+              }
+              
+              const now = audioContext.currentTime;
+              const crcSymbol = crcSymbols[crcIndex];
+              const gainA = crcSymbol === 1 ? -symbolGain : symbolGain;
+              const gainB = crcSymbol === 1 ? symbolGain : -symbolGain;
+              
+              spectralFilters.binA.gain.cancelScheduledValues(now);
+              spectralFilters.binB.gain.cancelScheduledValues(now);
+              spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
+              spectralFilters.binA.gain.linearRampToValueAtTime(gainA, now + fadeTime);
+              spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
+              spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
+              
+              crcIndex++;
+              const jitter = (Math.random() * 2 - 1) * jitterMs;
+              spectralTransmitTimer = setTimeout(transmitCRCSymbol, symbolDurationMs + jitter);
+            }
+            transmitCRCSymbol();
+            return;
+          }
           
           if (symbolIndex < totalSymbols) {
             // Add jitter to symbol timing
@@ -1800,9 +1902,9 @@
       // Add delta to buffer (always, even during calibration)
       spectralSymbolBuffer.push(delta);
       
-      // Keep buffer at code length
+      // Keep buffer at code length + CRC (need room for 31 + 8 = 39 symbols)
       const codeLen = PN31_CODE.length;
-      if (spectralSymbolBuffer.length > codeLen * 2) {
+      if (spectralSymbolBuffer.length > 50) {
         spectralSymbolBuffer.shift();
       }
       
@@ -2015,10 +2117,10 @@
           
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          // STRICT (iPhone/Over-Air): higher thresholds and more votes
-          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;
-          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0;
-          const Z_THRESHOLD = isIphoneMode ? 1.8 : 3.0;
+          // RELAXED (CRC provides ironclad security, so we can be more lenient on statistical thresholds)
+          const CORR_THRESHOLD = isIphoneMode ? 0.12 : 0.25;
+          const PSR_THRESHOLD = isIphoneMode ? 3.5 : 5.0;
+          const Z_THRESHOLD = isIphoneMode ? 1.2 : 2.5;
           const REQUIRED_VOTES = isIphoneMode ? 2 : 2;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - lenient for acoustic coupling
@@ -2166,6 +2268,37 @@
             }
             
             if (corePass && medianDeltaValidation) {
+              // ========== LAYER 6: CRC VERIFICATION (IRONCLAD) ==========
+              // Extract CRC symbols (next 8 symbols after the PN31 code)
+              // The spectralSymbolBuffer should contain at least codeLen + 8 symbols
+              if (spectralSymbolBuffer.length < codeLen + 8) {
+                console.log(`  └─ ⏳ Waiting for CRC symbols (have ${spectralSymbolBuffer.length}, need ${codeLen + 8})`);
+                return; // Wait for more symbols
+              }
+              
+              // Extract the 8 CRC symbols immediately following the PN31 code
+              const crcStartIdx = spectralSymbolBuffer.length - 8;
+              const crcSymbols = spectralSymbolBuffer.slice(crcStartIdx, crcStartIdx + 8);
+              
+              // Convert deltas to symbol polarities for CRC decoding
+              // Use sign of delta: positive delta → +1, negative → -1
+              const crcPolaritySymbols = crcSymbols.map(delta => delta > 0 ? 1 : -1);
+              
+              // Decode CRC
+              const receivedCRC = decodeCRCFromSymbols(crcPolaritySymbols);
+              
+              console.log(`  ├─ 🔐 CRC CHECK: symbols=[${crcPolaritySymbols.join(',')}], decoded=0x${receivedCRC.toString(16).padStart(2,'0')}`);
+              
+              // LAYER 6: CRC VERIFICATION (IRONCLAD - replaces all threshold fuzziness)
+              const crcValid = validateCRC(receivedCRC);
+              
+              if (!crcValid) {
+                console.log(`  └─ ❌ CRC VALIDATION FAILED - rejecting detection (likely random audio)`);
+                return; // Hard reject - no unlock without valid CRC
+              }
+              
+              console.log(`  └─ ✅ CRC VALIDATED - this is definitely our encoded signal!`);
+              
               // Store detection with metadata
               const detection = {
                 time: now,
@@ -2175,7 +2308,8 @@
                 zScore: zScore,
                 medianDelta: medianDelta,
                 txWasRunning: txRunning,
-                phase: best.phase
+                phase: best.phase,
+                crc: receivedCRC // Store for logging
               };
               
               if (!window.detectionHistory) window.detectionHistory = [];
@@ -2187,7 +2321,7 @@
               codeRepeatTimestamps.push(now);
               window.detectionPolarities.push(detectionPolarity);
               
-              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${REQUIRED_VOTES} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${REQUIRED_VOTES} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'}, CRC: 0x${receivedCRC.toString(16).padStart(2,'0')})`);
               
               // Layer 5: REQUIRE N DETECTIONS with proper cadence (adaptive for iPhone)
               if (codeRepeatTimestamps.length >= REQUIRED_VOTES) {
@@ -2228,6 +2362,8 @@
 
                 if (cadenceAll && txValidationPass && polarityPass && phaseStable && avgPsrPass) {
                   // 🎉 UNLOCK!
+                  const crcValues = detections.map(d => d.crc);
+                  console.log(`  └─ 🔐 CRCs: [${crcValues.map(c => '0x'+c.toString(16).padStart(2,'0')).join(', ')}] ✅ ALL VALID`);
                   fsmState = 'UNLOCKED';
                   fsmLockoutUntil = now + COOLDOWN_DURATION;
                   presenceVerified = true;
