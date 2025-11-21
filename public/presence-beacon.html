@@ -637,7 +637,6 @@
 
         <div class="readout" id="txReadout">
           <div><strong>Status:</strong> <span id="txStatus">Idle</span></div>
-          <div><strong>TX CRC:</strong> <span id="txCRC" style="font-family: monospace; color: #4CAF50;">—</span></div>
           <div><strong>Next Drop In:</strong> <span id="nextDropCountdown">—</span></div>
           <div><strong>Last Scheduled:</strong> <span id="lastScheduled">—</span></div>
           <div><strong>Last Masking RMS:</strong> <span id="lastMaskingRms">—</span></div>
@@ -656,12 +655,6 @@
           </div>
           <div class="subsection">
             <h3>Correlation Detection</h3>
-            <div class="control-group">
-              <div class="checkbox-wrapper">
-                <input type="checkbox" id="requireCRC" checked>
-                <label for="requireCRC">🔐 Require CRC Validation (ironclad - rejects unencoded audio)</label>
-              </div>
-            </div>
             <div class="band-display">
               <div class="band-meter">
                 <div class="label">Correlation Peak</div>
@@ -767,7 +760,7 @@
           <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
             <input type="checkbox" id="iphoneMode" style="width: 18px; height: 18px; cursor: pointer;">
             <span style="font-weight: 600;">📱 iPhone Mode</span>
-            <span style="opacity: 0.7; font-size: 0.9em;">(Adaptive: corr ≥0.15 + 2 votes, PSR ≥5dB, Z ≥1.8, amp gate relaxed)</span>
+            <span style="opacity: 0.7; font-size: 0.9em;">(Adaptive: corr ≥0.15 + 3 votes, PSR ≥5dB, Z ≥2.2, amp ≤75dB)</span>
           </label>
         </div>
 
@@ -953,86 +946,6 @@
 
     function linearToDb(linear) {
       return 20 * Math.log10(Math.max(linear, 1e-10));
-    }
-    
-    // ========== CRC-8 VERIFICATION (IRONCLAD LAYER) ==========
-    
-    // CRC-8 computation (polynomial 0x07, standard CRC-8)
-    function computeCRC8(data) {
-      let crc = 0;
-      for (let byte of data) {
-        crc ^= (byte & 0xFF);
-        for (let i = 0; i < 8; i++) {
-          const carry = (crc & 0x80) !== 0;
-          crc = ((crc << 1) & 0xFF);
-          if (carry) crc ^= 0x07;
-        }
-      }
-      return crc & 0xFF;
-    }
-    
-    // Encode 8-bit CRC as 8 symbols (1 bit per symbol for robustness)
-    // Encoding: 0→-1, 1→+1
-    function encodeCRCAsSymbols(crc8) {
-      const symbols = [];
-      for (let i = 7; i >= 0; i--) {
-        const bit = (crc8 >> i) & 0x01;
-        symbols.push(bit === 1 ? 1 : -1);
-      }
-      return symbols; // Returns 8 symbols
-    }
-    
-    // Decode 8 symbols back to 8-bit CRC
-    function decodeCRCFromSymbols(symbols) {
-      if (symbols.length < 8) return null;
-      let crc = 0;
-      for (let i = 0; i < 8; i++) {
-        const bit = symbols[i] > 0 ? 1 : 0;
-        crc = (crc << 1) | bit;
-      }
-      return crc & 0xFF;
-    }
-    
-    // Generate time-based CRC payload
-    function generateCRCPayload() {
-      // Time window ID (10 second windows)
-      const timeWindowId = Math.floor(Date.now() / 10000);
-      // Combine PN31_CODE with time window
-      const payload = [...PN31_CODE.map(v => v > 0 ? 1 : 0), timeWindowId & 0xFF, (timeWindowId >> 8) & 0xFF];
-      return computeCRC8(payload);
-    }
-    
-    // Generate static CRC payload (for offline encoding)
-    function computeStaticCRC() {
-      const payload = [...PN31_CODE.map(v => v > 0 ? 1 : 0)];
-      return computeCRC8(payload);
-    }
-    
-    // Validate CRC with ±1 time window tolerance (±10s) and static offline CRC fallback
-    function validateCRC(receivedCRC) {
-      const currentWindow = Math.floor(Date.now() / 10000);
-      
-      // Check current and adjacent windows (±10s tolerance)
-      for (let offset = -1; offset <= 1; offset++) {
-        const timeWindowId = currentWindow + offset;
-        const payload = [...PN31_CODE.map(v => v > 0 ? 1 : 0), timeWindowId & 0xFF, (timeWindowId >> 8) & 0xFF];
-        const expectedCRC = computeCRC8(payload);
-        
-        if (receivedCRC === expectedCRC) {
-          console.log(`  └─ 🔐 CRC MATCH @ window ${timeWindowId} (offset: ${offset})`);
-          return true;
-        }
-      }
-      
-      // Fallback: accept static CRC (used by offline encoder)
-      const staticCRC = computeStaticCRC();
-      if (receivedCRC === staticCRC) {
-        console.log(`  └─ 🔐 CRC MATCH (static offline CRC)`);
-        return true;
-      }
-      
-      console.log(`  └─ ❌ CRC MISMATCH: received=0x${receivedCRC.toString(16).padStart(2,'0')}`);
-      return false;
     }
 
     function clamp(val, min, max) {
@@ -1405,47 +1318,6 @@
           }
           
           symbolIndex++;
-          
-          // Check if we just finished a PN31 code and need to transmit CRC
-          if (symbolIndex % PN31_CODE.length === 0) {
-            // Transmit CRC after each PN31 repeat (including the last one)
-            const crcValue = generateCRCPayload();
-            const crcSymbols = encodeCRCAsSymbols(crcValue);
-            console.log(`🔐 TX: Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} (8 symbols)`);
-            
-            // Update TX HUD
-            const txCRCEl = document.getElementById('txCRC');
-            if (txCRCEl) txCRCEl.textContent = '0x' + crcValue.toString(16).padStart(2,'0').toUpperCase();
-            
-            let crcIndex = 0;
-            function transmitCRCSymbol() {
-              if (!txRunning || currentMode !== 'spectral' || !spectralFilters.binA) return;
-              if (crcIndex >= 8) {
-                // CRC complete, continue with next PN31 code or finish burst
-                const jitter = (Math.random() * 2 - 1) * jitterMs;
-                spectralTransmitTimer = setTimeout(transmitNext, symbolDurationMs + jitter);
-                return;
-              }
-              
-              const now = audioContext.currentTime;
-              const crcSymbol = crcSymbols[crcIndex];
-              const gainA = crcSymbol === 1 ? -symbolGain : symbolGain;
-              const gainB = crcSymbol === 1 ? symbolGain : -symbolGain;
-              
-              spectralFilters.binA.gain.cancelScheduledValues(now);
-              spectralFilters.binB.gain.cancelScheduledValues(now);
-              spectralFilters.binA.gain.setValueAtTime(spectralFilters.binA.gain.value, now);
-              spectralFilters.binA.gain.linearRampToValueAtTime(gainA, now + fadeTime);
-              spectralFilters.binB.gain.setValueAtTime(spectralFilters.binB.gain.value, now);
-              spectralFilters.binB.gain.linearRampToValueAtTime(gainB, now + fadeTime);
-              
-              crcIndex++;
-              const jitter = (Math.random() * 2 - 1) * jitterMs;
-              spectralTransmitTimer = setTimeout(transmitCRCSymbol, symbolDurationMs + jitter);
-            }
-            transmitCRCSymbol();
-            return;
-          }
           
           if (symbolIndex < totalSymbols) {
             // Add jitter to symbol timing
@@ -1928,9 +1800,9 @@
       // Add delta to buffer (always, even during calibration)
       spectralSymbolBuffer.push(delta);
       
-      // Keep buffer at code length + CRC (need room for 31 + 8 = 39 symbols)
+      // Keep buffer at code length
       const codeLen = PN31_CODE.length;
-      if (spectralSymbolBuffer.length > 50) {
+      if (spectralSymbolBuffer.length > codeLen * 2) {
         spectralSymbolBuffer.shift();
       }
       
@@ -1943,7 +1815,7 @@
         if (!window.baselineDeltaSamples) window.baselineDeltaSamples = [];
         if (!window.baselineCorrelationSamples) window.baselineCorrelationSamples = [];
         
-        const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
+        const currentEnergySum = linearToDb(powerA + powerB);
         window.baselineEnergySamples.push(currentEnergySum);
         window.baselineGuardLoSamples.push(powerGuardLo);
         window.baselineGuardHiSamples.push(powerGuardHi);
@@ -2058,7 +1930,7 @@
         // Try correlation when we have enough symbols
         if (spectralSymbolBuffer.length >= codeLen) {
           // Phase scan and polarity check
-          const phaseMax = 15; // Increased to 15 to ensure CRC symbols are in buffer (need phase≥8 for CRC)
+          const phaseMax = 7; // Check 8 phase offsets (better tolerance to jitter)
           let best = { corr: -1, phase: 0, sign: 1 };
           let allCorrelations = []; // For PSR calculation
           
@@ -2143,19 +2015,19 @@
           
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          // RELAXED (CRC provides ironclad security, so we can be more lenient on statistical thresholds)
-          const CORR_THRESHOLD = isIphoneMode ? 0.12 : 0.25;
-          const PSR_THRESHOLD = isIphoneMode ? 3.5 : 5.0;
-          const Z_THRESHOLD = isIphoneMode ? 1.2 : 2.5;
-          const REQUIRED_VOTES = isIphoneMode ? 2 : 2;
+          // Adaptive (iPhone): lower thresholds but require more votes and stricter cadence
+          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;
+          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0;
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 3.0;
+          const REQUIRED_VOTES = isIphoneMode ? 3 : 2;
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
-          const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - lenient for acoustic coupling
-          const GUARD_THRESHOLD = isIphoneMode ? 12.0 : 20.0; // dB - slightly relaxed on iPhone
-          // NEW: Maximum signal amplitude threshold (dBFS) - rejects overly loud signals (likely unencoded audio too close)
-          const MAX_SIGNAL_DBFS = isIphoneMode ? -8.0 : -6.0; // allow normal iPhone TX levels (-14 to -20 dBFS), reject near-0 dBFS
+          const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
+          const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
+          // NEW: Maximum signal amplitude threshold - rejects overly loud signals (likely unencoded audio too close)
+          const MAX_SIGNAL_AMPLITUDE_DB = isIphoneMode ? 75.0 : 85.0; // dB - reject if signal sum > this
           const CADENCE_WINDOW_MS = 0; // unused (dynamic cadence below)
           const PREAMBLE_TIMEOUT = 3.0; // seconds - more time for weak signals
-          const VOTE_WINDOW = isIphoneMode ? 10.0 : 12.0; // seconds - enough to capture 2 intra-burst repeats
+          const VOTE_WINDOW = 8.0; // seconds - longer window for weak signals
           const COOLDOWN_DURATION = 45.0; // seconds
           
           // ===== STATE: IDLE =====
@@ -2211,9 +2083,9 @@
             // Compute all detection metrics
             const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
             
-            // 0. Signal amplitude check (dBFS) - use direct dB values from band power
-            const signalAmplitudeDb = Math.max(powerA, powerB);
-            const amplitudePass = isIphoneMode ? true : (signalAmplitudeDb <= MAX_SIGNAL_DBFS);
+            // 0. Signal amplitude check (NEW) - reject overly loud signals (likely unencoded audio too close)
+            const signalAmplitudeDb = Math.max(linearToDb(powerA), linearToDb(powerB));
+            const amplitudePass = signalAmplitudeDb <= MAX_SIGNAL_AMPLITUDE_DB;
             
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
@@ -2232,7 +2104,7 @@
             const medianDeltaPass = medianDelta >= MEDIAN_DELTA_THRESHOLD;
             
             // 5. Energy balance check: |(E(A)+E(B)) - baseline| ≤ 1.0 dB
-            const currentEnergySum = linearToDb(dbToLinear(powerA) + dbToLinear(powerB));
+            const currentEnergySum = linearToDb(powerA + powerB);
             const energyDeviation = Math.abs(currentEnergySum - baselineEnergySum);
             const energyBalancePass = energyDeviation <= ENERGY_BALANCE_THRESHOLD;
             
@@ -2244,7 +2116,7 @@
             // Log ALL candidates to diagnose why unlock isn't happening
             if (correlation > 0.15 || zScore > 1.5) {
               console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
-              console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)} dBFS (≤${MAX_SIGNAL_DBFS}) ${amplitudePass?'✅':'❌'}`);
+              console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)}dB (≤${MAX_SIGNAL_AMPLITUDE_DB}) ${amplitudePass?'✅':'❌'}`);
               console.log(`  ├─ [correlation] ${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'}`);
               console.log(`  ├─ [PSR] ${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'}`);
               console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
@@ -2257,13 +2129,12 @@
             
             // Layer 0: AMPLITUDE CHECK (NEW) - reject overly loud signals first
             if (!amplitudePass) {
-              console.log(`  └─ ❌ Signal too loud: ${signalAmplitudeDb.toFixed(1)} dBFS > ${MAX_SIGNAL_DBFS} (likely unencoded audio too close)`);
+              console.log(`  └─ ❌ Signal too loud: ${signalAmplitudeDb.toFixed(1)}dB > ${MAX_SIGNAL_AMPLITUDE_DB}dB (likely unencoded audio too close)`);
               return; // Reject immediately
             }
             
-            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score)
-            // Note: Guards disabled in iPhone mode due to frequency overlap
-            const corePass = corrPass && psrPass && zPass;
+            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score, guards in iPhone mode)
+            const corePass = corrPass && psrPass && zPass && (isIphoneMode ? guardsPass : true);
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
             const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
@@ -2287,58 +2158,12 @@
               if (!corrPass) failures.push(`Correlation too low: ${correlation.toFixed(3)} < ${CORR_THRESHOLD}`);
               if (!psrPass) failures.push(`PSR too low: ${peakToSidelobeRatio.toFixed(1)}dB < ${PSR_THRESHOLD}dB`);
               if (!zPass) failures.push(`Z-score too low: ${zScore.toFixed(2)} < ${Z_THRESHOLD}`);
-              // Guards are diagnostic only in iPhone mode (not blocking)
-              if (!isIphoneMode && !guardsPass) failures.push(`Guards unstable: Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB > ${GUARD_THRESHOLD}dB`);
+              if (isIphoneMode && !guardsPass) failures.push(`Guards unstable: Lo=${guardLoDeviation.toFixed(1)}dB, Hi=${guardHiDeviation.toFixed(1)}dB > ${GUARD_THRESHOLD}dB`);
               console.log(`  └─ ❌ ${failures.join(', ')}`);
               return;
             }
             
             if (corePass && medianDeltaValidation) {
-              // ========== LAYER 6: CRC VERIFICATION (IRONCLAD) ==========
-              // The PN31 code was detected at phase offset 'best.phase'
-              // PN31 occupies: [length - codeLen - best.phase, length - best.phase)
-              // CRC symbols are AFTER the PN31 code: [length - best.phase, length - best.phase + 8)
-              
-              // Check if we have enough symbols for CRC extraction
-              // We need at least 8 symbols AFTER the detected PN31 code
-              if (best.phase < 8) {
-                console.log(`  └─ ⏳ Waiting for CRC symbols (phase=${best.phase}, need phase≥8 for full CRC)`);
-                return; // Wait for more symbols to arrive
-              }
-              
-              // Extract the 8 CRC symbols that follow the detected PN31 code
-              const crcStartIdx = spectralSymbolBuffer.length - best.phase;
-              const crcEndIdx = crcStartIdx + 8;
-              
-              // Safety check: ensure indices are valid
-              if (crcEndIdx > spectralSymbolBuffer.length) {
-                console.log(`  └─ ⏳ CRC not fully buffered yet (need ${crcEndIdx - spectralSymbolBuffer.length} more symbols)`);
-                return;
-              }
-              
-              const crcSymbols = spectralSymbolBuffer.slice(crcStartIdx, crcEndIdx);
-              
-              // Convert deltas to symbol polarities for CRC decoding
-              // Use sign of delta: positive delta → +1, negative → -1
-              const crcPolaritySymbols = crcSymbols.map(delta => delta > 0 ? 1 : -1);
-              // Normalize by detection polarity so +1/-1 mapping matches TX
-              const crcAligned = crcPolaritySymbols.map(s => s * detectionPolarity);
-              
-              // Decode CRC
-              const receivedCRC = decodeCRCFromSymbols(crcAligned);
-              
-              console.log(`  ├─ 🔐 CRC CHECK (phase=${best.phase}): symbols=[${crcAligned.join(',')}], decoded=0x${receivedCRC.toString(16).padStart(2,'0')}`);
-              
-              // LAYER 6: CRC VERIFICATION (IRONCLAD - replaces all threshold fuzziness)
-              const crcValid = validateCRC(receivedCRC);
-              
-              if (!crcValid) {
-                console.log(`  └─ ❌ CRC VALIDATION FAILED - rejecting detection (likely random audio)`);
-                return; // Hard reject - no unlock without valid CRC
-              }
-              
-              console.log(`  └─ ✅ CRC VALIDATED - this is definitely our encoded signal!`);
-              
               // Store detection with metadata
               const detection = {
                 time: now,
@@ -2347,9 +2172,7 @@
                 psr: peakToSidelobeRatio,
                 zScore: zScore,
                 medianDelta: medianDelta,
-                txWasRunning: txRunning,
-                phase: best.phase,
-                crc: receivedCRC // Store for logging
+                txWasRunning: txRunning
               };
               
               if (!window.detectionHistory) window.detectionHistory = [];
@@ -2361,93 +2184,84 @@
               codeRepeatTimestamps.push(now);
               window.detectionPolarities.push(detectionPolarity);
               
-              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/${REQUIRED_VOTES} (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'}, CRC: 0x${receivedCRC.toString(16).padStart(2,'0')})`);
+              console.log(`  ✅ VALID DETECTION! Vote ${codeRepeatTimestamps.length}/2 (polarity: ${detectionPolarity > 0 ? '+' : '-'}, TX: ${txRunning ? 'ON' : 'OFF'})`);
               
               // Layer 5: REQUIRE N DETECTIONS with proper cadence (adaptive for iPhone)
               if (codeRepeatTimestamps.length >= REQUIRED_VOTES) {
+                const lastTwo = codeRepeatTimestamps.slice(-2);
+                const deltaT = (lastTwo[1] - lastTwo[0]) * 1000; // ms
                 const symbolMs = parseFloat(document.getElementById('spectralSymbolDuration').value);
                 const expectedRepeatMs = PN31_CODE.length * symbolMs;
-
-                const times = codeRepeatTimestamps.slice(-REQUIRED_VOTES);
-                const intervals = times.slice(1).map((t,i) => (times[i+1] - times[i]) * 1000);
-                const strictTol = isIphoneMode ? 0.05 : 0.15; // ±5% on iPhone
-                const cadenceAll = intervals.length > 0 && intervals.every(iv => Math.abs(iv - expectedRepeatMs) <= expectedRepeatMs * strictTol);
-
-                // Phase stability (same correlation phase across votes, allow ±1 bin jitter)
-                const lastDetections = window.detectionHistory.slice(-REQUIRED_VOTES);
-                const phases = lastDetections.map(d => d.phase);
-                const phaseStable = phases.every(p => Math.abs(p - phases[0]) <= 1);
-
-                // Polarity consistency across all votes
-                const lastPols = window.detectionPolarities.slice(-REQUIRED_VOTES);
-                const polarityConsistentAll = lastPols.every(p => p === lastPols[0]);
-                const polarityPass = (isIphoneMode || isOverAirMode) ? polarityConsistentAll : true;
-
-                // Average PSR across votes
-                const avgPSR = lastDetections.reduce((a, d) => a + d.psr, 0) / Math.max(1, lastDetections.length);
-                const avgPsrThreshold = isIphoneMode ? 7.0 : 6.0;
-                const avgPsrPass = avgPSR >= avgPsrThreshold;
-
-                console.log(`  ├─ [cadence] intervals=${intervals.map(iv => iv.toFixed(0)).join(', ')}ms (expected: ${expectedRepeatMs.toFixed(0)}ms, tol ±${(strictTol*100).toFixed(0)}%) ${cadenceAll?'✅':'❌'}`);
-                console.log(`  ├─ [phase] ${phases.join(', ')} ${phaseStable ? '✅ stable' : '❌ unstable'}`);
-                console.log(`  ├─ [polarity] ${lastPols.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistentAll ? '✅ consistent' : '⚠️ mixed'}`);
-                console.log(`  ├─ [PSR avg] ${avgPSR.toFixed(1)}dB (≥${avgPsrThreshold}) ${avgPsrPass ? '✅' : '❌'}`);
-
-                // Layer 7: TX VALIDATION (MANDATORY when not Over-Air)
-                const detections = window.detectionHistory.slice(-REQUIRED_VOTES);
-                const allTxOn = detections.every(d => d.txWasRunning);
-                const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-                const txValidationPass = isOverAirMode ? true : allTxOn;
-                console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
-
-                if (cadenceAll && txValidationPass && polarityPass && phaseStable && avgPsrPass) {
-                  // 🎉 UNLOCK!
-                  const crcValues = detections.map(d => d.crc);
-                  console.log(`  └─ 🔐 CRCs: [${crcValues.map(c => '0x'+c.toString(16).padStart(2,'0')).join(', ')}] ✅ ALL VALID`);
-                  fsmState = 'UNLOCKED';
-                  fsmLockoutUntil = now + COOLDOWN_DURATION;
-                  presenceVerified = true;
-
-                  const badge = document.getElementById('presenceBadge');
-                  badge.textContent = '🔓 UNLOCKED';
-                  badge.classList.add('verified');
-
-                  // Log detection quality for analysis
-                  console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
-                  console.log(`  ├─ Detections: ${REQUIRED_VOTES}/${REQUIRED_VOTES} (intervals: [${intervals.map(iv=>iv.toFixed(0)).join(', ')}] ms)`);
-                  console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
-                  console.log(`  ├─ Polarity: ${polarityConsistentAll ? '✅ consistent' : '⚠️ mixed'}`);
-                  console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
-                  console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
-
-                  updateFSMStateDisplay();
-
-                  // Reset to IDLE after cooldown
-                  setTimeout(() => {
-                    fsmState = 'IDLE';
-                    fsmStateStartTime = audioContext.currentTime;
-                    presenceVerified = false;
-                    window.detectionHistory = [];
-                    window.detectionPolarities = [];
-                    const badge = document.getElementById('presenceBadge');
-                    badge.textContent = '⏳ Listening...';
-                    badge.classList.remove('verified');
-                    console.log('🔄 Cooldown complete - FSM reset to IDLE');
-                    updateFSMStateDisplay();
-                  }, COOLDOWN_DURATION * 1000);
-                } else if (!txValidationPass) {
-                  // TX was off - reject as false positive (unless Over-Air Mode)
-                  console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
-                  // Clear oldest detection to allow new pattern
-                  codeRepeatTimestamps.shift();
-                  window.detectionPolarities.shift();
-                } else {
-                  const reasons = [];
-                  if (!cadenceAll) reasons.push('cadence');
-                  if (!phaseStable) reasons.push('phase');
-                  if (!polarityPass) reasons.push('polarity');
-                  if (!avgPsrPass) reasons.push('avg PSR');
-                  console.log(`  └─ ❌ Validation failed (${reasons.join(', ')}) - waiting for next detection`);
+                
+                // Cadence: allow only full-code repeat on iPhone (filter symbol-spaced coincidences)
+                const tolerance = 0.5;
+                const cadenceMatch = Math.abs(deltaT - expectedRepeatMs) <= expectedRepeatMs * tolerance;
+                
+                // Per-symbol cadence only allowed off iPhone mode
+                const perSymbolMatch = !isIphoneMode && Math.abs(deltaT - symbolMs) <= symbolMs * 0.5;
+                const cadenceOk = cadenceMatch || perSymbolMatch;
+                
+                console.log(`  ├─ [cadence] Δt=${deltaT.toFixed(0)}ms (expected: ${expectedRepeatMs.toFixed(0)}ms or ${symbolMs.toFixed(0)}ms) ${cadenceOk?'✅':'❌'}`);
+                
+                // Layer 6: POLARITY CONSISTENCY (blocking on iPhone)
+                const polarities = window.detectionPolarities.slice(-2);
+                const polarityConsistent = polarities[0] === polarities[1];
+                const polarityPass = isIphoneMode ? polarityConsistent : true;
+                console.log(`  ├─ [polarity] ${polarities.map(p => p > 0 ? '+' : '-').join(', ')} ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
+                
+            // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
+            const detections = window.detectionHistory.slice(-2);
+            const allTxOn = detections.every(d => d.txWasRunning);
+            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+            const txValidationPass = isOverAirMode ? true : allTxOn;
+            console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
+            
+            if (cadenceOk && txValidationPass && polarityPass) {
+              // 🎉 UNLOCK!
+              fsmState = 'UNLOCKED';
+              fsmLockoutUntil = now + COOLDOWN_DURATION;
+              presenceVerified = true;
+              
+              const badge = document.getElementById('presenceBadge');
+              badge.textContent = '🔓 UNLOCKED';
+              badge.classList.add('verified');
+              
+              // Log detection quality for analysis
+              console.log(`🎉🎉🎉 FSM: CODE_LOCK → UNLOCKED 🎉🎉🎉`);
+              console.log(`  ├─ Detections: ${REQUIRED_VOTES}/${REQUIRED_VOTES} (interval: ${deltaT.toFixed(0)}ms)`);
+              console.log(`  ├─ Correlations: [${detections.map(d => d.correlation.toFixed(3)).join(', ')}]`);
+              console.log(`  ├─ Polarity: ${polarityConsistent ? '✅ consistent' : '⚠️ mixed'}`);
+              console.log(`  ├─ TX validation: ${isOverAirMode ? '✅ bypassed (Over-Air Mode)' : '✅ TX was ON for all detections'}`);
+              console.log(`  └─ Cooldown: ${COOLDOWN_DURATION}s`);
+              
+              // Warning if mixed polarity (diagnostic only)
+              if (!polarityConsistent) {
+                console.warn(`⚠️ Mixed polarity detected - signal may have interference`);
+              }
+              
+              updateFSMStateDisplay();
+              
+              // Reset to IDLE after cooldown
+              setTimeout(() => {
+                fsmState = 'IDLE';
+                fsmStateStartTime = audioContext.currentTime;
+                presenceVerified = false;
+                window.detectionHistory = [];
+                window.detectionPolarities = [];
+                const badge = document.getElementById('presenceBadge');
+                badge.textContent = '⏳ Listening...';
+                badge.classList.remove('verified');
+                console.log('🔄 Cooldown complete - FSM reset to IDLE');
+                updateFSMStateDisplay();
+              }, COOLDOWN_DURATION * 1000);
+            } else if (!txValidationPass) {
+              // TX was off - reject as false positive (unless Over-Air Mode)
+              console.log(`  └─ ❌ TX VALIDATION FAILED: TX was off - rejecting as ambient noise false positive`);
+              // Clear oldest detection to allow new pattern
+              codeRepeatTimestamps.shift();
+              window.detectionPolarities.shift();
+            } else {
+                  console.log(`  └─ ❌ Cadence check failed - waiting for next detection`);
                   // Clear oldest detection to allow new pattern
                   codeRepeatTimestamps.shift();
                   window.detectionPolarities.shift();
@@ -2889,16 +2703,15 @@
       filterA.connect(filterB);
       filterB.connect(offlineCtx.destination);
       
-      // Schedule symbols (PN31 + CRC for each repeat)
+      // Schedule symbols
       const fadeTime = 0.004; // 4ms fade to match live
       const jitterMs = 12; // ±12ms jitter
       let symbolsEncoded = 0;
       
       for (let repeat = 0; repeat < repeats; repeat++) {
-        // Encode PN31 code
         for (let i = 0; i < PN31_CODE.length; i++) {
           const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
-          const symbolTime = startTime + (repeat * (PN31_CODE.length + 8) + i) * symbolDurationS + jitter;
+          const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS + jitter;
           
           if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
             const symbol = PN31_CODE[i];
@@ -2923,37 +2736,9 @@
             }
           }
         }
-        
-        // Encode CRC-8 after each PN31 repeat (8 symbols)
-        const crcValue = computeStaticCRC();
-        const crcSymbols = encodeCRCAsSymbols(crcValue);
-        console.log(`  🔐 Appending CRC=0x${crcValue.toString(16).padStart(2,'0')} after repeat ${repeat + 1} (static for offline)`);
-        
-        for (let j = 0; j < 8; j++) {
-          const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
-          const symbolTime = startTime + (repeat * (PN31_CODE.length + 8) + PN31_CODE.length + j) * symbolDurationS + jitter;
-          
-          if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
-            const crcSymbol = crcSymbols[j];
-            const gainA = crcSymbol === 1 ? -symbolGain : symbolGain;
-            const gainB = crcSymbol === 1 ? symbolGain : -symbolGain;
-            
-            filterA.gain.setValueAtTime(0, symbolTime);
-            filterA.gain.linearRampToValueAtTime(gainA, symbolTime + fadeTime);
-            filterA.gain.setValueAtTime(gainA, symbolTime + symbolDurationS - fadeTime);
-            filterA.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
-            
-            filterB.gain.setValueAtTime(0, symbolTime);
-            filterB.gain.linearRampToValueAtTime(gainB, symbolTime + fadeTime);
-            filterB.gain.setValueAtTime(gainB, symbolTime + symbolDurationS - fadeTime);
-            filterB.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
-            
-            symbolsEncoded++;
-          }
-        }
       }
       
-      console.log(`  ✅ Scheduled ${symbolsEncoded} symbols (including CRC)`);
+      console.log(`  ✅ Scheduled ${symbolsEncoded} symbols`);
       
       source.start(0);
       offlineEncodedBuffer = await offlineCtx.startRendering();
