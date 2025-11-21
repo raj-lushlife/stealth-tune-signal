@@ -2018,7 +2018,7 @@
           // IRONCLAD: Raised thresholds + enforcing sign-match (no bypass)
           const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.35; // Raised for safety margin
           const PSR_THRESHOLD = isIphoneMode ? 5.0 : 8.0; // Raised for safety margin
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 5.0; // Keep at 5.0 (encoded=5.33, unencoded=1.62)
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 4.0; // Lowered to 4.0 for robustness (encoded: 4.16-6.18, unencoded: 0.63-1.54)
           const SIGN_MATCH_THRESHOLD = 0.70; // NEW: Enforce sign pattern matching (encoded=0.774, unencoded=0.516-0.677)
           const REQUIRED_VOTES = isIphoneMode ? 3 : 3; // Keep at 3 votes always
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
