@@ -2135,6 +2135,12 @@
               console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
               console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)}dB (≤${MAX_SIGNAL_AMPLITUDE_DB}) ${amplitudePass?'✅':'❌'}`);
               console.log(`  ├─ [sign-match] ${signMatchRatio.toFixed(3)} = ${signMatches}/${Math.min(recentDeltas.length, PN31_CODE.length)} (≥${SIGN_MATCH_THRESHOLD.toFixed(2)}) ${signMatchPass?'✅':'❌'}`);
+              // DIAGNOSTIC: Show actual vs expected signs
+              const actualSigns = recentDeltas.slice(0, 31).map(d => d > 0 ? '+' : '-').join('');
+              const expectedSigns = PN31_CODE.map(v => ((v > 0 ? 1 : -1) * best.sign > 0) ? '+' : '-').join('');
+              console.log(`  ├─ [sign-pattern] actual:   ${actualSigns}`);
+              console.log(`  ├─ [sign-pattern] expected: ${expectedSigns}`);
+              console.log(`  ├─ [phase-info] best.phase=${best.phase}, best.sign=${best.sign}, bufLen=${spectralSymbolBuffer.length}`);
               console.log(`  ├─ [correlation] ${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'}`);
               console.log(`  ├─ [PSR] ${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'}`);
               console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
