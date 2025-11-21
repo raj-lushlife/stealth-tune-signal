@@ -2081,7 +2081,11 @@
             }
             
             // Compute all detection metrics
-            const recentDeltas = spectralSymbolBuffer.slice(-codeLen);
+            // Use phase-aligned deltas (align with best.phase found by correlation)
+            const recentDeltas = spectralSymbolBuffer.slice(
+              spectralSymbolBuffer.length - codeLen - best.phase,
+              spectralSymbolBuffer.length - best.phase
+            );
             
             // 0. Signal amplitude check (NEW) - reject overly loud signals (likely unencoded audio too close)
             const signalAmplitudeDb = Math.max(linearToDb(powerA), linearToDb(powerB));
@@ -2089,9 +2093,10 @@
             
             // 0b. LAYER 1: SIGN PATTERN MATCHING (MOST CRITICAL - binary check)
             // Count how many symbols have correct polarity matching PN31 code
+            // Account for polarity inversion detected by correlation (best.sign)
             let signMatches = 0;
             for (let i = 0; i < Math.min(recentDeltas.length, PN31_CODE.length); i++) {
-              const expectedSign = PN31_CODE[i] > 0 ? 1 : -1;
+              const expectedSign = (PN31_CODE[i] > 0 ? 1 : -1) * best.sign; // Apply polarity correction
               const actualSign = recentDeltas[i] > 0 ? 1 : -1;
               if (expectedSign === actualSign) signMatches++;
             }
