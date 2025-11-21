@@ -2740,8 +2740,8 @@
           
           if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
             const symbol = PN31_CODE[i];
-            const gainA = symbol === 1 ? -symbolGain : symbolGain;
-            const gainB = symbol === 1 ? symbolGain : -symbolGain;
+            const gainA = symbol > 0 ? -symbolGain : symbolGain;
+            const gainB = symbol > 0 ? symbolGain : -symbolGain;
             
             // Schedule smooth ramps
             filterA.gain.setValueAtTime(0, symbolTime);
