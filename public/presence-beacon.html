@@ -435,7 +435,7 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="offlineSpectralGain" value="6.5" min="0.5" max="10" step="0.1">
+              <input type="number" id="offlineSpectralGain" value="30" min="0.5" max="40" step="0.5">
             </div>
             <div class="control-group">
               <label>Start Time (s):</label>
@@ -534,9 +534,9 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="spectralGain" value="12" min="3" max="24" step="0.5">
+              <input type="number" id="spectralGain" value="30" min="3" max="40" step="0.5">
               <div class="readout" style="font-size:10px; margin-top:4px;">
-                3-6dB: Imperceptible | 8-12dB: Balanced | 15-24dB: Max detection
+                3-12dB: Subtle | 15-24dB: Balanced | 30-40dB: Maximum signal strength
               </div>
             </div>
             <div class="control-group">
@@ -1172,13 +1172,13 @@
       const filterA = audioContext.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 50;
+      filterA.Q.value = 10; // Wider bandwidth (600Hz) for stronger signal
       filterA.gain.value = 0;
       
       const filterB = audioContext.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 50;
+      filterB.Q.value = 10; // Wider bandwidth (600Hz) for stronger signal
       filterB.gain.value = 0;
       
       spectralFilters = { binA: filterA, binB: filterB };
@@ -2016,10 +2016,10 @@
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
           // Adaptive (iPhone): lower thresholds but require more votes and stricter cadence
-          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.30;
-          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0;
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 3.0;
-          const REQUIRED_VOTES = isIphoneMode ? 3 : 2;
+          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.40; // Raised from 0.30 to reject unencoded
+          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 12.0; // Raised from 6.0 to reject unencoded
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 10.0; // Raised from 3.0 to reject unencoded
+          const REQUIRED_VOTES = isIphoneMode ? 3 : 3; // Now requires 3 votes always
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
@@ -2715,13 +2715,13 @@
       const filterA = offlineCtx.createBiquadFilter();
       filterA.type = 'peaking';
       filterA.frequency.value = freqA;
-      filterA.Q.value = 50; // Match live encoder Q
+      filterA.Q.value = 10; // Wider bandwidth (600Hz) for stronger over-air signal
       filterA.gain.value = 0;
       
       const filterB = offlineCtx.createBiquadFilter();
       filterB.type = 'peaking';
       filterB.frequency.value = freqB;
-      filterB.Q.value = 50; // Match live encoder Q
+      filterB.Q.value = 10; // Wider bandwidth (600Hz) for stronger over-air signal
       filterB.gain.value = 0;
       
       source.connect(filterA);
