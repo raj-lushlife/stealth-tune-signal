@@ -1760,10 +1760,11 @@
           const after = [dataArray[idx+1], dataArray[idx+2]].map(safeVal);
           return `[${before.join(',')},(${center}),${after.join(',')}]`;
         };
-        console.log(`  ├─ Bin A [${binIndexA}] @ ${freqA}Hz: ${getContext(binIndexA)} dB`);
-        console.log(`  ├─ Bin B [${binIndexB}] @ ${freqB}Hz: ${getContext(binIndexB)} dB`);
+        console.log(`  ├─ 🎯 RX ANALYZING: Center=${centerFreq}Hz, Spacing=${binSpacing}Hz`);
+        console.log(`  ├─ Bin A [${binIndexA}] @ ${freqA.toFixed(0)}Hz: ${getContext(binIndexA)} dB`);
+        console.log(`  ├─ Bin B [${binIndexB}] @ ${freqB.toFixed(0)}Hz: ${getContext(binIndexB)} dB`);
         console.log(`  ├─ PowerA: ${powerA.toFixed(2)}dB, PowerB: ${powerB.toFixed(2)}dB`);
-        console.log(`  └─ Δ (B-A): ${(powerB - powerA).toFixed(2)}dB`);
+        console.log(`  └─ Δ (B-A): ${(powerB - powerA).toFixed(2)}dB ${powerB > powerA ? '✅ B>A (+)' : '❌ A>B (-)'}`);
       }
       
       // Guards (for baseline stability check) - placed ±3× bin spacing for better isolation
@@ -2101,7 +2102,10 @@
               if (expectedSign === actualSign) signMatches++;
             }
             const signMatchRatio = recentDeltas.length > 0 ? signMatches / Math.min(recentDeltas.length, PN31_CODE.length) : 0;
-            const SIGN_MATCH_THRESHOLD = isIphoneMode ? 0.70 : 0.65; // 70% of symbols must match for iPhone
+            
+            // Adjust threshold based on mode - Over-Air Mode needs relaxed threshold due to acoustic distortion
+            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+            const SIGN_MATCH_THRESHOLD = isOverAirMode ? 0.55 : (isIphoneMode ? 0.70 : 0.65); // Relaxed to 55% for over-air
             const signMatchPass = signMatchRatio >= SIGN_MATCH_THRESHOLD;
             
             // 1. Correlation check
