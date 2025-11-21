@@ -423,7 +423,7 @@
             </div>
             <div class="control-group">
               <label>Bin Spacing (Hz):</label>
-              <input type="number" id="offlineSpectralSpacing" value="50" min="30" max="100" step="10">
+              <input type="number" id="offlineSpectralSpacing" value="500" min="30" max="1000" step="50">
             </div>
             <div class="control-group">
               <label>Symbol Duration (ms):</label>
@@ -522,7 +522,7 @@
             </div>
             <div class="control-group">
               <label>Bin Spacing (Hz):</label>
-              <input type="number" id="spectralBinSpacing" value="50" min="30" max="100" step="10">
+              <input type="number" id="spectralBinSpacing" value="500" min="30" max="1000" step="50">
             </div>
             <div class="control-group">
               <label>Symbol Duration (ms):</label>
@@ -2015,11 +2015,11 @@
           
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          // Adaptive (iPhone): lower thresholds but require more votes and stricter cadence
-          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.40; // Raised from 0.30 to reject unencoded
-          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 12.0; // Raised from 6.0 to reject unencoded
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 10.0; // Raised from 3.0 to reject unencoded
-          const REQUIRED_VOTES = isIphoneMode ? 3 : 3; // Now requires 3 votes always
+          // EMERGENCY: Temporarily lowered to test 500Hz spacing for alternating pattern
+          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.25; // Lowered temporarily to see if 500Hz spacing works
+          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0; // Lowered temporarily to see if 500Hz spacing works
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 5.0; // Lowered temporarily to see if 500Hz spacing works
+          const REQUIRED_VOTES = isIphoneMode ? 3 : 3; // Keep at 3 votes always
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
           const GUARD_THRESHOLD = 20.0; // dB - more lenient (acoustic path adds noise)
