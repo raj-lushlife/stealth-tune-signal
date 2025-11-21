@@ -2015,10 +2015,11 @@
           
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          // EMERGENCY: Temporarily lowered to test 500Hz spacing for alternating pattern
-          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.25; // Lowered temporarily to see if 500Hz spacing works
-          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 6.0; // Lowered temporarily to see if 500Hz spacing works
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 5.0; // Lowered temporarily to see if 500Hz spacing works
+          // IRONCLAD: Raised thresholds + enforcing sign-match (no bypass)
+          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.35; // Raised for safety margin
+          const PSR_THRESHOLD = isIphoneMode ? 5.0 : 8.0; // Raised for safety margin
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 5.0; // Keep at 5.0 (encoded=5.33, unencoded=1.62)
+          const SIGN_MATCH_THRESHOLD = 0.70; // NEW: Enforce sign pattern matching (encoded=0.774, unencoded=0.516-0.677)
           const REQUIRED_VOTES = isIphoneMode ? 3 : 3; // Keep at 3 votes always
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
@@ -2102,9 +2103,8 @@
             }
             const signMatchRatio = recentDeltas.length > 0 ? signMatches / Math.min(recentDeltas.length, PN31_CODE.length) : 0;
             const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
-            const SIGN_MATCH_THRESHOLD = isIphoneMode ? 0.70 : 0.65;
-            // CRITICAL: Disable sign-match for Over-Air mode - iPhone mic processing flattens sign pattern
-            const signMatchPass = isOverAirMode ? true : (signMatchRatio >= SIGN_MATCH_THRESHOLD);
+            // IRONCLAD: sign-match ALWAYS enforced (no bypass)
+            const signMatchPass = signMatchRatio >= SIGN_MATCH_THRESHOLD;
             
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
@@ -2136,7 +2136,7 @@
             if (correlation > 0.15 || zScore > 1.5) {
               console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
               console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)}dB (≤${MAX_SIGNAL_AMPLITUDE_DB}) ${amplitudePass?'✅':'❌'}`);
-              console.log(`  ├─ [sign-match] ${signMatchRatio.toFixed(3)} = ${signMatches}/${Math.min(recentDeltas.length, PN31_CODE.length)} (≥${SIGN_MATCH_THRESHOLD.toFixed(2)}) ${signMatchPass?'✅':'❌'}${isOverAirMode ? ' [BYPASSED - Over-Air Mode]' : ''}`);
+              console.log(`  ├─ [sign-match] ${signMatchRatio.toFixed(3)} = ${signMatches}/${Math.min(recentDeltas.length, PN31_CODE.length)} (≥${SIGN_MATCH_THRESHOLD.toFixed(2)}) ${signMatchPass?'✅':'❌'}`);
               // DIAGNOSTIC: Show actual vs expected signs
               const actualSigns = recentDeltas.slice(0, 31).map(d => d > 0 ? '+' : '-').join('');
               const expectedSigns = PN31_CODE.map(v => ((v > 0 ? 1 : -1) * best.sign > 0) ? '+' : '-').join('');
@@ -2159,8 +2159,8 @@
               return; // Reject immediately
             }
             
-            // Layer 1: CORE CRITERIA (sign-match REQUIRED for iPhone unless Over-Air, plus correlation, PSR, Z-score, guards)
-            const corePass = corrPass && psrPass && zPass && (isIphoneMode ? (guardsPass && signMatchPass) : true);
+            // Layer 1: CORE CRITERIA - IRONCLAD: sign-match ALWAYS ENFORCED (no bypass)
+            const corePass = corrPass && psrPass && zPass && signMatchPass;
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
             if (!txRunning && !isOverAirMode && frameCount % 60 === 0) {
