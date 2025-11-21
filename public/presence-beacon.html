@@ -2101,8 +2101,10 @@
               if (expectedSign === actualSign) signMatches++;
             }
             const signMatchRatio = recentDeltas.length > 0 ? signMatches / Math.min(recentDeltas.length, PN31_CODE.length) : 0;
-            const SIGN_MATCH_THRESHOLD = isIphoneMode ? 0.70 : 0.65; // 70% of symbols must match for iPhone
-            const signMatchPass = signMatchRatio >= SIGN_MATCH_THRESHOLD;
+            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
+            const SIGN_MATCH_THRESHOLD = isIphoneMode ? 0.70 : 0.65;
+            // CRITICAL: Disable sign-match for Over-Air mode - iPhone mic processing flattens sign pattern
+            const signMatchPass = isOverAirMode ? true : (signMatchRatio >= SIGN_MATCH_THRESHOLD);
             
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
@@ -2134,7 +2136,7 @@
             if (correlation > 0.15 || zScore > 1.5) {
               console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
               console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)}dB (≤${MAX_SIGNAL_AMPLITUDE_DB}) ${amplitudePass?'✅':'❌'}`);
-              console.log(`  ├─ [sign-match] ${signMatchRatio.toFixed(3)} = ${signMatches}/${Math.min(recentDeltas.length, PN31_CODE.length)} (≥${SIGN_MATCH_THRESHOLD.toFixed(2)}) ${signMatchPass?'✅':'❌'}`);
+              console.log(`  ├─ [sign-match] ${signMatchRatio.toFixed(3)} = ${signMatches}/${Math.min(recentDeltas.length, PN31_CODE.length)} (≥${SIGN_MATCH_THRESHOLD.toFixed(2)}) ${signMatchPass?'✅':'❌'}${isOverAirMode ? ' [BYPASSED - Over-Air Mode]' : ''}`);
               // DIAGNOSTIC: Show actual vs expected signs
               const actualSigns = recentDeltas.slice(0, 31).map(d => d > 0 ? '+' : '-').join('');
               const expectedSigns = PN31_CODE.map(v => ((v > 0 ? 1 : -1) * best.sign > 0) ? '+' : '-').join('');
@@ -2157,11 +2159,10 @@
               return; // Reject immediately
             }
             
-            // Layer 1: CORE CRITERIA (sign-match REQUIRED for iPhone, plus correlation, PSR, Z-score, guards)
+            // Layer 1: CORE CRITERIA (sign-match REQUIRED for iPhone unless Over-Air, plus correlation, PSR, Z-score, guards)
             const corePass = corrPass && psrPass && zPass && (isIphoneMode ? (guardsPass && signMatchPass) : true);
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
-            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
             if (!txRunning && !isOverAirMode && frameCount % 60 === 0) {
               console.log(`  └─ ⚠️ WARNING: TX not running - unlock may be from noise!`);
             }
@@ -2237,7 +2238,6 @@
             // Layer 7: TX VALIDATION (MANDATORY) - Block false positives from ambient noise
             const detections = window.detectionHistory.slice(-2);
             const allTxOn = detections.every(d => d.txWasRunning);
-            const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
             const txValidationPass = isOverAirMode ? true : allTxOn;
             console.log(`  ├─ [TX validation] ${txValidationPass ? (isOverAirMode ? '✅ Bypassed (Over-Air Mode)' : '✅ TX was ON') : '❌ TX was OFF - BLOCKING UNLOCK'}`);
             
