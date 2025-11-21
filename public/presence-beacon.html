@@ -2087,6 +2087,18 @@
             const signalAmplitudeDb = Math.max(linearToDb(powerA), linearToDb(powerB));
             const amplitudePass = signalAmplitudeDb <= MAX_SIGNAL_AMPLITUDE_DB;
             
+            // 0b. LAYER 1: SIGN PATTERN MATCHING (MOST CRITICAL - binary check)
+            // Count how many symbols have correct polarity matching PN31 code
+            let signMatches = 0;
+            for (let i = 0; i < Math.min(recentDeltas.length, PN31_CODE.length); i++) {
+              const expectedSign = PN31_CODE[i] > 0 ? 1 : -1;
+              const actualSign = recentDeltas[i] > 0 ? 1 : -1;
+              if (expectedSign === actualSign) signMatches++;
+            }
+            const signMatchRatio = recentDeltas.length > 0 ? signMatches / Math.min(recentDeltas.length, PN31_CODE.length) : 0;
+            const SIGN_MATCH_THRESHOLD = isIphoneMode ? 0.70 : 0.65; // 70% of symbols must match for iPhone
+            const signMatchPass = signMatchRatio >= SIGN_MATCH_THRESHOLD;
+            
             // 1. Correlation check
             const corrPass = correlation >= CORR_THRESHOLD;
             
@@ -2117,6 +2129,7 @@
             if (correlation > 0.15 || zScore > 1.5) {
               console.log(`🔍 CODE_LOCK CANDIDATE @ t=${elapsed.toFixed(2)}s:`);
               console.log(`  ├─ [amplitude] ${signalAmplitudeDb.toFixed(1)}dB (≤${MAX_SIGNAL_AMPLITUDE_DB}) ${amplitudePass?'✅':'❌'}`);
+              console.log(`  ├─ [sign-match] ${signMatchRatio.toFixed(3)} = ${signMatches}/${Math.min(recentDeltas.length, PN31_CODE.length)} (≥${SIGN_MATCH_THRESHOLD.toFixed(2)}) ${signMatchPass?'✅':'❌'}`);
               console.log(`  ├─ [correlation] ${correlation.toFixed(3)} (≥${CORR_THRESHOLD}) ${corrPass?'✅':'❌'}`);
               console.log(`  ├─ [PSR] ${peakToSidelobeRatio.toFixed(1)}dB (≥${PSR_THRESHOLD}) ${psrPass?'✅':'❌'}`);
               console.log(`  ├─ [Z-score] ${zScore.toFixed(2)} (≥${Z_THRESHOLD}) ${zPass?'✅':'❌'}`);
@@ -2133,8 +2146,8 @@
               return; // Reject immediately
             }
             
-            // Layer 1: CORE CRITERIA (correlation, PSR, Z-score, guards in iPhone mode)
-            const corePass = corrPass && psrPass && zPass && (isIphoneMode ? guardsPass : true);
+            // Layer 1: CORE CRITERIA (sign-match REQUIRED for iPhone, plus correlation, PSR, Z-score, guards)
+            const corePass = corrPass && psrPass && zPass && (isIphoneMode ? (guardsPass && signMatchPass) : true);
             
             // Layer 2: TX STATUS CHECK (warn but don't block)
             const isOverAirMode = document.getElementById('overAirMode')?.checked || false;
@@ -2155,6 +2168,7 @@
             // Additional rejection messages for failed core criteria
             if (!corePass) {
               const failures = [];
+              if (isIphoneMode && !signMatchPass) failures.push(`Sign-match too low: ${signMatchRatio.toFixed(3)} (${signMatches}/${Math.min(recentDeltas.length, PN31_CODE.length)}) < ${SIGN_MATCH_THRESHOLD.toFixed(2)}`);
               if (!corrPass) failures.push(`Correlation too low: ${correlation.toFixed(3)} < ${CORR_THRESHOLD}`);
               if (!psrPass) failures.push(`PSR too low: ${peakToSidelobeRatio.toFixed(1)}dB < ${PSR_THRESHOLD}dB`);
               if (!zPass) failures.push(`Z-score too low: ${zScore.toFixed(2)} < ${Z_THRESHOLD}`);
