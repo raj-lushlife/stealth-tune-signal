@@ -2743,6 +2743,11 @@
             const gainA = symbol > 0 ? -symbolGain : symbolGain;
             const gainB = symbol > 0 ? symbolGain : -symbolGain;
             
+            // DEBUG: Log first 10 symbols
+            if (repeat === 0 && i < 10) {
+              console.log(`  Symbol[${i}]: code=${symbol.toFixed(1)}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB`);
+            }
+            
             // Schedule smooth ramps
             filterA.gain.setValueAtTime(0, symbolTime);
             filterA.gain.linearRampToValueAtTime(gainA, symbolTime + fadeTime);
