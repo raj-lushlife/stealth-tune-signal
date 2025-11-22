@@ -2015,11 +2015,11 @@
           
           // FSM thresholds - adjust for iPhone Mode (over-air detection)
           const isIphoneMode = document.getElementById('iphoneMode')?.checked || false;
-          // IRONCLAD: Raised thresholds + enforcing sign-match (no bypass)
-          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.50; // Raised to 0.50 to block ambient noise (noise: 0.422, encoded: >0.58)
+          // RELAXED: Lowered thresholds for robustness across diverse audio content
+          const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.40; // Lowered to 0.40 for diverse audio (jazz: 0.667, walkmen: 0.431)
           const PSR_THRESHOLD = isIphoneMode ? 5.0 : 8.0; // Keep at 8.0
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 5.0; // Raised to 5.0 to block ambient noise (noise: 4.06, encoded: >5.0)
-          const SIGN_MATCH_THRESHOLD = 0.75; // Raised to 0.75 to block ambient noise (noise: 0.742, encoded @60dB: >0.80)
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 4.0; // Lowered to 4.0 for diverse audio (jazz: 5.63, walkmen: 2.83-6.08)
+          const SIGN_MATCH_THRESHOLD = 0.65; // Lowered to 0.65 for diverse audio (jazz: 0.774, walkmen: 0.710)
           const REQUIRED_VOTES = isIphoneMode ? 3 : 3; // Keep at 3 votes always
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
           const ENERGY_BALANCE_THRESHOLD = 5.0; // dB - much more lenient for acoustic coupling
