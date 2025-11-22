@@ -430,8 +430,8 @@
               <input type="number" id="offlineSpectralDuration" value="60" min="40" max="120" step="5">
             </div>
             <div class="control-group">
-              <label>Code Repeats (spread throughout):</label>
-              <input type="number" id="offlineSpectralRepeats" value="4" min="1" max="8">
+              <label>Code Repeats:</label>
+              <input type="number" id="offlineSpectralRepeats" value="2" min="1" max="5">
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
@@ -529,8 +529,8 @@
               <input type="number" id="spectralSymbolDuration" value="60" min="40" max="120" step="5">
             </div>
             <div class="control-group">
-              <label>Code Repeats (spread throughout):</label>
-              <input type="number" id="spectralRepeats" value="4" min="1" max="8">
+              <label>Code Repeats:</label>
+              <input type="number" id="spectralRepeats" value="2" min="1" max="5">
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
@@ -2683,7 +2683,7 @@
     }
     
     async function processOfflineSpectral() {
-      document.getElementById('offlineStatus').textContent = 'Analyzing audio for masking...';
+      document.getElementById('offlineStatus').textContent = 'Encoding spectral beacon...';
       
       const centerFreq = parseFloat(document.getElementById('offlineSpectralCenter').value);
       const binSpacing = parseFloat(document.getElementById('offlineSpectralSpacing').value);
@@ -2696,93 +2696,11 @@
       const freqB = centerFreq + binSpacing / 2;
       const symbolDurationS = symbolDurationMs / 1000;
       
-      // ═══ STEP 1: ANALYZE AUDIO FOR MASKING OPPORTUNITIES ═══
-      console.log('🔍 ADAPTIVE MASKING ANALYSIS:');
-      console.log(`  ├─ Analyzing ${offlineOriginalBuffer.duration.toFixed(2)}s of audio...`);
-      
-      // Create offline context for analysis
-      const analysisCtx = new OfflineAudioContext(1, offlineOriginalBuffer.length, offlineOriginalBuffer.sampleRate);
-      const analysisSource = analysisCtx.createBufferSource();
-      analysisSource.buffer = offlineOriginalBuffer;
-      
-      // Bandpass filter around watermark frequency to measure masking energy
-      const bpFilter = analysisCtx.createBiquadFilter();
-      bpFilter.type = 'bandpass';
-      bpFilter.frequency.value = centerFreq;
-      bpFilter.Q.value = 2; // ~3kHz bandwidth for masking analysis
-      
-      const analyser = analysisCtx.createAnalyser();
-      analyser.fftSize = 2048;
-      
-      analysisSource.connect(bpFilter);
-      bpFilter.connect(analyser);
-      bpFilter.connect(analysisCtx.destination);
-      
-      analysisSource.start(0);
-      const analysisBuffer = await analysisCtx.startRendering();
-      
-      // Extract masking energy levels per time window
-      const windowSize = symbolDurationS; // Analyze in symbol-sized windows
-      const sampleRate = offlineOriginalBuffer.sampleRate;
-      const samplesPerWindow = Math.floor(windowSize * sampleRate);
-      const numWindows = Math.floor(analysisBuffer.length / samplesPerWindow);
-      
-      const maskingLevels = [];
-      const channelData = analysisBuffer.getChannelData(0);
-      
-      // STRICT MASKING: Only encode in VERY loud sections with high spectral energy
-      const STRICT_MASKING_THRESHOLD = -35; // Only encode where energy > -35dB (very loud)
-      
-      for (let i = 0; i < numWindows; i++) {
-        const startSample = i * samplesPerWindow;
-        const endSample = Math.min(startSample + samplesPerWindow, channelData.length);
-        
-        // Calculate RMS energy in this window
-        let sumSquares = 0;
-        for (let j = startSample; j < endSample; j++) {
-          sumSquares += channelData[j] * channelData[j];
-        }
-        const rms = Math.sqrt(sumSquares / (endSample - startSample));
-        const rmsDb = 20 * Math.log10(Math.max(rms, 1e-10));
-        
-        // Calculate spectral variance (complexity) - only encode in spectrally rich sections
-        let variance = 0;
-        const mean = channelData.slice(startSample, endSample).reduce((a, b) => a + Math.abs(b), 0) / (endSample - startSample);
-        for (let j = startSample; j < endSample; j++) {
-          variance += Math.pow(Math.abs(channelData[j]) - mean, 2);
-        }
-        variance = variance / (endSample - startSample);
-        
-        // ADAPTIVE GAIN: Louder sections can handle more watermark gain
-        const adaptiveGain = Math.min(symbolGain, Math.max(symbolGain * 0.5, symbolGain * (rmsDb + 40) / 10));
-        
-        maskingLevels.push({
-          time: i * windowSize,
-          energyDb: rmsDb,
-          variance: variance,
-          adaptiveGain: adaptiveGain,
-          canMask: rmsDb > STRICT_MASKING_THRESHOLD && variance > 0.0001 // STRICT: loud AND spectrally complex
-        });
-      }
-      
-      const maskableWindows = maskingLevels.filter(w => w.canMask).length;
-      const maskablePercent = ((maskableWindows / numWindows) * 100).toFixed(1);
-      
-      console.log(`  ├─ Analyzed ${numWindows} time windows (${windowSize.toFixed(3)}s each)`);
-      console.log(`  ├─ STRICT MASKING: energy > -35dB AND spectral complexity > 0.0001`);
-      console.log(`  ├─ Maskable windows: ${maskableWindows}/${numWindows} (${maskablePercent}%)`);
-      console.log(`  └─ Energy range: ${Math.min(...maskingLevels.map(w => w.energyDb)).toFixed(1)} to ${Math.max(...maskingLevels.map(w => w.energyDb)).toFixed(1)} dB`);
-      
-      document.getElementById('offlineStatus').textContent = `Found ${maskableWindows} maskable regions (${maskablePercent}%)...`;
-      
-      // ═══ STEP 2: ENCODE SYMBOLS ONLY IN MASKABLE REGIONS ═══
-      console.log('🎯 SELECTIVE SPECTRAL ENCODING:');
+      console.log('🎯 SPECTRAL OFFLINE ENCODING:');
       console.log(`  ├─ Freq A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
-      console.log(`  ├─ Symbol duration: ${symbolDurationMs}ms (max gain: ±${symbolGain}dB)`);
-      console.log(`  ├─ ADAPTIVE GAIN: Reduced in quieter sections for better masking`);
+      console.log(`  ├─ Symbol duration: ${symbolDurationMs}ms (±${symbolGain}dB)`);
       console.log(`  ├─ Code: PN-31 × ${repeats} repeats = ${PN31_CODE.length * repeats} symbols`);
-      console.log(`  ├─ Code: PN-31 × ${repeats} repeats = ${PN31_CODE.length * repeats} symbols`);
-      console.log(`  └─ Masking threshold: -50dB`);
+      console.log(`  └─ Total duration: ${(PN31_CODE.length * repeats * symbolDurationS).toFixed(2)}s`);
       
       const offlineCtx = new OfflineAudioContext(
         offlineOriginalBuffer.numberOfChannels,
@@ -2810,56 +2728,27 @@
       filterA.connect(filterB);
       filterB.connect(offlineCtx.destination);
       
-      
-      // ═══ SCHEDULE SYMBOLS SPREAD THROUGHOUT RECORDING WITH BREAKS ═══
-      const fadeTime = 0.004; // 4ms fade
+      // Schedule symbols
+      const fadeTime = 0.004; // 4ms fade to match live
       const jitterMs = 12; // ±12ms jitter
-      
-      // Calculate spacing to distribute repeats throughout recording
-      const codeDuration = PN31_CODE.length * symbolDurationS; // Duration of one full PN31 code
-      const totalDuration = offlineOriginalBuffer.duration - startTime;
-      const spacingBetweenRepeats = (totalDuration - (codeDuration * repeats)) / Math.max(repeats - 1, 1);
-      
-      console.log(`  ├─ Code duration: ${codeDuration.toFixed(2)}s`);
-      console.log(`  ├─ Spacing between repeats: ${spacingBetweenRepeats.toFixed(2)}s`);
-      console.log(`  └─ Will spread ${repeats} repeats across ${totalDuration.toFixed(2)}s`);
-      
       let symbolsEncoded = 0;
-      let symbolsSkipped = 0;
       
       for (let repeat = 0; repeat < repeats; repeat++) {
-        // Calculate start time for this repeat (spread throughout recording)
-        const repeatStartTime = startTime + (repeat * (codeDuration + spacingBetweenRepeats));
-        
         for (let i = 0; i < PN31_CODE.length; i++) {
           const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
-          const symbolTime = repeatStartTime + (i * symbolDurationS) + jitter;
+          const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS + jitter;
           
           if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
-            // ═══ CHECK IF THIS TIME HAS STRONG MASKING ═══
-            const windowIndex = Math.floor(symbolTime / windowSize);
-            const maskingInfo = maskingLevels[windowIndex];
-            
-            if (!maskingInfo?.canMask) {
-              symbolsSkipped++;
-              if (symbolsSkipped <= 3) {
-                console.log(`  ⏭️ Skip t=${symbolTime.toFixed(2)}s: energy=${maskingInfo?.energyDb.toFixed(1)}dB (need > -35dB)`);
-              }
-              continue; // Skip - not loud/complex enough
-            }
-            
             const symbol = PN31_CODE[i];
-            // Use ADAPTIVE gain based on masking energy
-            const adaptiveGain = maskingInfo.adaptiveGain;
-            const gainA = symbol > 0 ? -adaptiveGain : adaptiveGain;
-            const gainB = symbol > 0 ? adaptiveGain : -adaptiveGain;
+            const gainA = symbol > 0 ? -symbolGain : symbolGain;
+            const gainB = symbol > 0 ? symbolGain : -symbolGain;
             
-            // DEBUG: Log first 3 encoded symbols
-            if (symbolsEncoded < 3) {
-              console.log(`  ✓ t=${symbolTime.toFixed(2)}s: symbol=${symbol.toFixed(1)}, gain=${adaptiveGain.toFixed(1)}dB (energy=${maskingInfo.energyDb.toFixed(1)}dB, variance=${maskingInfo.variance.toFixed(4)})`);
+            // DEBUG: Log first 10 symbols
+            if (repeat === 0 && i < 10) {
+              console.log(`  Symbol[${i}]: code=${symbol.toFixed(1)}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB`);
             }
             
-            // Schedule with smooth fades
+            // Schedule smooth ramps
             filterA.gain.setValueAtTime(0, symbolTime);
             filterA.gain.linearRampToValueAtTime(gainA, symbolTime + fadeTime);
             filterA.gain.setValueAtTime(gainA, symbolTime + symbolDurationS - fadeTime);
@@ -2871,16 +2760,15 @@
             filterB.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
             
             symbolsEncoded++;
+            
+            if (i === 0) {
+              console.log(`  ✓ Repeat ${repeat + 1}/${repeats}: t=${symbolTime.toFixed(2)}s, symbol=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(2)}dB, gainB=${gainB.toFixed(2)}dB`);
+            }
           }
-        }
-        
-        if (repeat === 0 || repeat === repeats - 1) {
-          console.log(`  🔁 Repeat ${repeat + 1}/${repeats} @ t=${repeatStartTime.toFixed(2)}s`);
         }
       }
       
-      console.log(`  ✅ Encoded ${symbolsEncoded} symbols, skipped ${symbolsSkipped} (selective masking)`);
-      console.log(`  📊 Encoding density: ${((symbolsEncoded / (symbolsEncoded + symbolsSkipped)) * 100).toFixed(1)}%`);
+      console.log(`  ✅ Scheduled ${symbolsEncoded} symbols`);
       
       source.start(0);
       offlineEncodedBuffer = await offlineCtx.startRendering();
