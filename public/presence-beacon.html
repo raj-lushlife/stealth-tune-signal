@@ -2731,6 +2731,7 @@
       // Schedule symbols
       const fadeTime = 0.005; // 5ms envelope fade for reduced audibility
       const jitterMs = 12; // ±12ms jitter
+      const freqJitterHz = 50; // ±50Hz frequency jitter for reduced tonality (Phase 2)
       let symbolsEncoded = 0;
       
       for (let repeat = 0; repeat < repeats; repeat++) {
@@ -2743,9 +2744,16 @@
             const gainA = symbol > 0 ? -symbolGain : symbolGain;
             const gainB = symbol > 0 ? symbolGain : -symbolGain;
             
+            // Apply random frequency jitter (Phase 2: frequency spreading)
+            const freqOffset = (Math.random() * 2 - 1) * freqJitterHz; // ±50Hz
+            const jitteredFreqA = freqA + freqOffset;
+            const jitteredFreqB = freqB + freqOffset;
+            filterA.frequency.setValueAtTime(jitteredFreqA, symbolTime);
+            filterB.frequency.setValueAtTime(jitteredFreqB, symbolTime);
+            
             // DEBUG: Log first 10 symbols
             if (repeat === 0 && i < 10) {
-              console.log(`  Symbol[${i}]: code=${symbol.toFixed(1)}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB`);
+              console.log(`  Symbol[${i}]: code=${symbol.toFixed(1)}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB, freqOffset=${freqOffset.toFixed(1)}Hz`);
             }
             
             // Schedule smooth ramps
