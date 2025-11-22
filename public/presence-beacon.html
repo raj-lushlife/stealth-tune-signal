@@ -427,11 +427,11 @@
             </div>
             <div class="control-group">
               <label>Symbol Duration (ms):</label>
-              <input type="number" id="offlineSpectralDuration" value="60" min="40" max="120" step="5">
+              <input type="number" id="offlineSpectralDuration" value="100" min="40" max="120" step="5">
             </div>
             <div class="control-group">
               <label>Code Repeats:</label>
-              <input type="number" id="offlineSpectralRepeats" value="2" min="1" max="5">
+              <input type="number" id="offlineSpectralRepeats" value="3" min="1" max="5">
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
@@ -526,11 +526,11 @@
             </div>
             <div class="control-group">
               <label>Symbol Duration (ms):</label>
-              <input type="number" id="spectralSymbolDuration" value="60" min="40" max="120" step="5">
+              <input type="number" id="spectralSymbolDuration" value="100" min="40" max="120" step="5">
             </div>
             <div class="control-group">
               <label>Code Repeats:</label>
-              <input type="number" id="spectralRepeats" value="2" min="1" max="5">
+              <input type="number" id="spectralRepeats" value="3" min="1" max="5">
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
@@ -1248,7 +1248,7 @@
       const burstIntervalS = parseFloat(document.getElementById('spectralBurstInterval').value);
       
       const symbolDurationS = symbolDurationMs / 1000;
-      const fadeTime = 0.01; // 10ms cos² fade
+      const fadeTime = 0.005; // 5ms envelope fade for reduced audibility
       const jitterMs = 15; // ±15ms jitter
       
       const preambleDurationMs = 90; // 90ms preamble
@@ -2729,7 +2729,7 @@
       filterB.connect(offlineCtx.destination);
       
       // Schedule symbols
-      const fadeTime = 0.004; // 4ms fade to match live
+      const fadeTime = 0.005; // 5ms envelope fade for reduced audibility
       const jitterMs = 12; // ±12ms jitter
       let symbolsEncoded = 0;
       
