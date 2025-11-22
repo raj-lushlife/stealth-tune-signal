@@ -419,7 +419,7 @@
           <div class="grid-2col">
             <div class="control-group">
               <label>Center Frequency (Hz):</label>
-              <input type="number" id="offlineSpectralCenter" value="6000" min="400" max="18000" step="100">
+              <input type="number" id="offlineSpectralCenter" value="9000" min="400" max="18000" step="100">
             </div>
             <div class="control-group">
               <label>Bin Spacing (Hz):</label>
@@ -427,7 +427,7 @@
             </div>
             <div class="control-group">
               <label>Symbol Duration (ms):</label>
-              <input type="number" id="offlineSpectralDuration" value="100" min="40" max="120" step="5">
+              <input type="number" id="offlineSpectralDuration" value="150" min="40" max="200" step="5">
             </div>
             <div class="control-group">
               <label>Code Repeats:</label>
@@ -435,12 +435,19 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="offlineSpectralGain" value="46" min="0.5" max="60" step="0.5">
+              <input type="number" id="offlineSpectralGain" value="60" min="0.5" max="70" step="0.5">
             </div>
             <div class="control-group">
               <label>Start Time (s):</label>
               <input type="number" id="offlineSpectralStart" value="2" min="0" max="60" step="0.1">
             </div>
+            <div class="control-group">
+              <label>Gap Between Bursts (s):</label>
+              <input type="number" id="offlineSpectralGap" value="4" min="0" max="10" step="0.5">
+            </div>
+          </div>
+          <div class="readout">
+            💡 <strong>Burst Mode:</strong> Set gap to 4-5s to break up continuous squeal into short bursts. Set to 0 for continuous encoding.
           </div>
         </div>
 
@@ -2728,15 +2735,22 @@
       filterA.connect(filterB);
       filterB.connect(offlineCtx.destination);
       
-      // Schedule symbols
+      // Schedule symbols with burst gaps
       const fadeTime = 0.010; // 10ms envelope fade for reduced audibility
       const jitterMs = 12; // ±12ms jitter
+      const gapBetweenBursts = parseFloat(document.getElementById('offlineSpectralGap').value) || 0;
+      const burstDuration = PN31_CODE.length * symbolDurationS; // Duration of one complete PN-31 sequence
       let symbolsEncoded = 0;
       
+      console.log(`  ├─ Burst mode: ${gapBetweenBursts > 0 ? `${gapBetweenBursts}s gaps between bursts` : 'continuous (no gaps)'}`);
+      
       for (let repeat = 0; repeat < repeats; repeat++) {
+        // Add gap after each complete burst (except first)
+        const burstOffset = repeat * (burstDuration + gapBetweenBursts);
+        
         for (let i = 0; i < PN31_CODE.length; i++) {
           const jitter = (Math.random() * 2 - 1) * (jitterMs / 1000);
-          const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS + jitter;
+          const symbolTime = startTime + burstOffset + (i * symbolDurationS) + jitter;
           
           if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
             const symbol = PN31_CODE[i];
