@@ -435,12 +435,7 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="offlineSpectralGain" value="60" min="0.5" max="60" step="0.5">
-            </div>
-            <div class="control-group">
-              <label>Masking Threshold (dB):</label>
-              <input type="number" id="offlineSpectralMaskingThreshold" value="-30" min="-60" max="0" step="1">
-              <small style="display: block; color: #888; margin-top: 4px;">Only encode when music has energy above this level at center frequency</small>
+              <input type="number" id="offlineSpectralGain" value="52" min="0.5" max="60" step="0.5">
             </div>
             <div class="control-group">
               <label>Start Time (s):</label>
@@ -2695,17 +2690,15 @@
       const symbolDurationMs = parseFloat(document.getElementById('offlineSpectralDuration').value);
       const repeats = parseInt(document.getElementById('offlineSpectralRepeats').value);
       const symbolGain = parseFloat(document.getElementById('offlineSpectralGain').value);
-      const maskingThresholdDb = parseFloat(document.getElementById('offlineSpectralMaskingThreshold').value);
       const startTime = parseFloat(document.getElementById('offlineSpectralStart').value);
       
       const freqA = centerFreq - binSpacing / 2;
       const freqB = centerFreq + binSpacing / 2;
       const symbolDurationS = symbolDurationMs / 1000;
       
-      console.log('🎯 SPECTRAL OFFLINE ENCODING:');
+      console.log('🎯 SPECTRAL OFFLINE ENCODING (Optimized for imperceptibility):');
       console.log(`  ├─ Freq A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
-      console.log(`  ├─ Symbol duration: ${symbolDurationMs}ms (±${symbolGain}dB)`);
-      console.log(`  ├─ Masking threshold: ${maskingThresholdDb}dB at ${centerFreq}Hz`);
+      console.log(`  ├─ Symbol duration: ${symbolDurationMs}ms (±${symbolGain}dB) - optimized gain`);
       console.log(`  ├─ Code: PN-31 × ${repeats} repeats = ${PN31_CODE.length * repeats} symbols`);
       console.log(`  └─ Total duration: ${(PN31_CODE.length * repeats * symbolDurationS).toFixed(2)}s`);
       
