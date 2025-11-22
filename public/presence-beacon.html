@@ -2025,7 +2025,7 @@
           // RELAXED: Lowered thresholds for robustness across diverse audio content
           const CORR_THRESHOLD = isIphoneMode ? 0.15 : 0.40; // Lowered to 0.40 for diverse audio (jazz: 0.667, walkmen: 0.431)
           const PSR_THRESHOLD = isIphoneMode ? 5.0 : 8.0; // Keep at 8.0
-          const Z_THRESHOLD = isIphoneMode ? 2.2 : 4.0; // Lowered to 4.0 for diverse audio (jazz: 5.63, walkmen: 2.83-6.08)
+          const Z_THRESHOLD = isIphoneMode ? 2.2 : 3.4; // Lowered to 3.4 to allow 15dB gain to work (15dB: 3.46, 30dB: >4.5)
           const SIGN_MATCH_THRESHOLD = 0.65; // Lowered to 0.65 for diverse audio (jazz: 0.774, walkmen: 0.710)
           const REQUIRED_VOTES = isIphoneMode ? 3 : 3; // Keep at 3 votes always
           const MEDIAN_DELTA_THRESHOLD = 0.5; // dB - keep same
