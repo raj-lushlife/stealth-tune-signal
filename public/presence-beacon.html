@@ -435,7 +435,12 @@
             </div>
             <div class="control-group">
               <label>Boost/Cut (±dB):</label>
-              <input type="number" id="offlineSpectralGain" value="46" min="0.5" max="60" step="0.5">
+              <input type="number" id="offlineSpectralGain" value="60" min="0.5" max="60" step="0.5">
+            </div>
+            <div class="control-group">
+              <label>Masking Threshold (dB):</label>
+              <input type="number" id="offlineSpectralMaskingThreshold" value="-30" min="-60" max="0" step="1">
+              <small style="display: block; color: #888; margin-top: 4px;">Only encode when music has energy above this level at center frequency</small>
             </div>
             <div class="control-group">
               <label>Start Time (s):</label>
@@ -2690,6 +2695,7 @@
       const symbolDurationMs = parseFloat(document.getElementById('offlineSpectralDuration').value);
       const repeats = parseInt(document.getElementById('offlineSpectralRepeats').value);
       const symbolGain = parseFloat(document.getElementById('offlineSpectralGain').value);
+      const maskingThresholdDb = parseFloat(document.getElementById('offlineSpectralMaskingThreshold').value);
       const startTime = parseFloat(document.getElementById('offlineSpectralStart').value);
       
       const freqA = centerFreq - binSpacing / 2;
@@ -2699,6 +2705,7 @@
       console.log('🎯 SPECTRAL OFFLINE ENCODING:');
       console.log(`  ├─ Freq A: ${freqA}Hz, B: ${freqB}Hz (spacing: ${binSpacing}Hz)`);
       console.log(`  ├─ Symbol duration: ${symbolDurationMs}ms (±${symbolGain}dB)`);
+      console.log(`  ├─ Masking threshold: ${maskingThresholdDb}dB at ${centerFreq}Hz`);
       console.log(`  ├─ Code: PN-31 × ${repeats} repeats = ${PN31_CODE.length * repeats} symbols`);
       console.log(`  └─ Total duration: ${(PN31_CODE.length * repeats * symbolDurationS).toFixed(2)}s`);
       
@@ -2728,11 +2735,19 @@
       filterA.connect(filterB);
       filterB.connect(offlineCtx.destination);
       
-      // Schedule symbols
+      // Schedule symbols with spectral masking
       const fadeTime = 0.005; // 5ms envelope fade for reduced audibility
       const jitterMs = 12; // ±12ms jitter
       const freqJitterHz = 50; // ±50Hz frequency jitter for reduced tonality (Phase 2)
       let symbolsEncoded = 0;
+      let symbolsSkipped = 0;
+      
+      // Pre-analyze audio for spectral masking
+      const audioData = offlineOriginalBuffer.getChannelData(0);
+      const sampleRate = offlineOriginalBuffer.sampleRate;
+      const fftSize = 2048;
+      
+      console.log(`🎭 SPECTRAL MASKING: threshold=${maskingThresholdDb}dB at ${centerFreq}Hz`);
       
       for (let repeat = 0; repeat < repeats; repeat++) {
         for (let i = 0; i < PN31_CODE.length; i++) {
@@ -2740,42 +2755,69 @@
           const symbolTime = startTime + (repeat * PN31_CODE.length + i) * symbolDurationS + jitter;
           
           if (symbolTime + symbolDurationS <= offlineOriginalBuffer.duration) {
-            const symbol = PN31_CODE[i];
-            const gainA = symbol > 0 ? -symbolGain : symbolGain;
-            const gainB = symbol > 0 ? symbolGain : -symbolGain;
-            
-            // Apply random frequency jitter (Phase 2: frequency spreading)
-            const freqOffset = (Math.random() * 2 - 1) * freqJitterHz; // ±50Hz
-            const jitteredFreqA = freqA + freqOffset;
-            const jitteredFreqB = freqB + freqOffset;
-            filterA.frequency.setValueAtTime(jitteredFreqA, symbolTime);
-            filterB.frequency.setValueAtTime(jitteredFreqB, symbolTime);
-            
-            // DEBUG: Log first 10 symbols
-            if (repeat === 0 && i < 10) {
-              console.log(`  Symbol[${i}]: code=${symbol.toFixed(1)}, gainA=${gainA.toFixed(1)}dB, gainB=${gainB.toFixed(1)}dB, freqOffset=${freqOffset.toFixed(1)}Hz`);
+            // Check spectral energy at symbol time for masking
+            const sampleIndex = Math.floor(symbolTime * sampleRate);
+            const fftData = new Float32Array(fftSize);
+            for (let j = 0; j < fftSize && sampleIndex + j < audioData.length; j++) {
+              fftData[j] = audioData[sampleIndex + j];
             }
             
-            // Schedule smooth ramps
-            filterA.gain.setValueAtTime(0, symbolTime);
-            filterA.gain.linearRampToValueAtTime(gainA, symbolTime + fadeTime);
-            filterA.gain.setValueAtTime(gainA, symbolTime + symbolDurationS - fadeTime);
-            filterA.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
+            // Simple FFT analysis to get energy at centerFreq
+            const binIndex = Math.floor(centerFreq * fftSize / sampleRate);
+            let energy = 0;
+            const window = 5; // Average over ±5 bins
+            for (let k = -window; k <= window; k++) {
+              const idx = binIndex + k;
+              if (idx >= 0 && idx < fftSize / 2) {
+                energy += fftData[idx] * fftData[idx];
+              }
+            }
+            energy = energy / (2 * window + 1);
+            const energyDb = 10 * Math.log10(Math.max(energy, 1e-10));
             
-            filterB.gain.setValueAtTime(0, symbolTime);
-            filterB.gain.linearRampToValueAtTime(gainB, symbolTime + fadeTime);
-            filterB.gain.setValueAtTime(gainB, symbolTime + symbolDurationS - fadeTime);
-            filterB.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
-            
-            symbolsEncoded++;
-            
-            if (i === 0) {
-              console.log(`  ✓ Repeat ${repeat + 1}/${repeats}: t=${symbolTime.toFixed(2)}s, symbol=${symbol > 0 ? '+1' : '-1'}, gainA=${gainA.toFixed(2)}dB, gainB=${gainB.toFixed(2)}dB`);
+            // Only encode if sufficient masking energy exists
+            if (energyDb >= maskingThresholdDb) {
+              const symbol = PN31_CODE[i];
+              const gainA = symbol > 0 ? -symbolGain : symbolGain;
+              const gainB = symbol > 0 ? symbolGain : -symbolGain;
+              
+              // Apply random frequency jitter (Phase 2: frequency spreading)
+              const freqOffset = (Math.random() * 2 - 1) * freqJitterHz; // ±50Hz
+              const jitteredFreqA = freqA + freqOffset;
+              const jitteredFreqB = freqB + freqOffset;
+              filterA.frequency.setValueAtTime(jitteredFreqA, symbolTime);
+              filterB.frequency.setValueAtTime(jitteredFreqB, symbolTime);
+              
+              // Schedule smooth ramps
+              filterA.gain.setValueAtTime(0, symbolTime);
+              filterA.gain.linearRampToValueAtTime(gainA, symbolTime + fadeTime);
+              filterA.gain.setValueAtTime(gainA, symbolTime + symbolDurationS - fadeTime);
+              filterA.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
+              
+              filterB.gain.setValueAtTime(0, symbolTime);
+              filterB.gain.linearRampToValueAtTime(gainB, symbolTime + fadeTime);
+              filterB.gain.setValueAtTime(gainB, symbolTime + symbolDurationS - fadeTime);
+              filterB.gain.linearRampToValueAtTime(0, symbolTime + symbolDurationS);
+              
+              symbolsEncoded++;
+              
+              // DEBUG: Log first 5 encoded symbols
+              if (symbolsEncoded <= 5) {
+                console.log(`  ✅ Symbol[${i}]: ENCODED (energy=${energyDb.toFixed(1)}dB) code=${symbol.toFixed(1)}, gainA=${gainA.toFixed(1)}dB`);
+              }
+            } else {
+              symbolsSkipped++;
+              
+              // DEBUG: Log first 5 skipped symbols
+              if (symbolsSkipped <= 5) {
+                console.log(`  ⏭️  Symbol[${i}]: SKIPPED (energy=${energyDb.toFixed(1)}dB < ${maskingThresholdDb}dB)`);
+              }
             }
           }
         }
       }
       
+      console.log(`  📊 Masking results: ${symbolsEncoded} encoded, ${symbolsSkipped} skipped (${(100 * symbolsEncoded / (symbolsEncoded + symbolsSkipped)).toFixed(1)}% encoded)`);
       console.log(`  ✅ Scheduled ${symbolsEncoded} symbols`);
       
       source.start(0);
